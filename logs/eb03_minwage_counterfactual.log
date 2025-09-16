@@ -1,0 +1,1643 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Josua\Output\208789\/eb03_minwage_counterfactual.log
+  log type:  text
+ opened on:  19 Apr 2023, 10:44:53
+
+. 
+. /*
+> In diesem Do-File werden Kerndichteschaetzung der ostdeutschen und westdeutschen 
+> Lohnverteilung in 2008 und 2014 plus einer kontrafaktischen Simulation der Lohndichte 
+> in 2014 unter der Annahme das Branchen- Mindestloehne bei ihrem Niveau von 2008 bleiben
+> gechätzt
+> */
+. 
+. //====================================================================================
+. //      0. Custom Programms
+. //====================================================================================
+. 
+. //Needed software
+. //fdzinstall gtools
+. 
+. //Small helper program for conditional display of strings
+. cap program drop displaycond
+
+. program displaycond 
+  1.         syntax anything, b(integer)
+  2.         if `b'==1{
+  3.                 display "`1'"
+  4.         }
+  5. end     
+
+. 
+. 
+. //====================================================================================
+. //      1. Compute counterfactual and output density information
+. //====================================================================================
+. 
+. forvalues e=0/1{
+  2.         matrix drop _all
+  3.         //Load monthly minimum wages for a counterfactual into a matrix
+.         preserve
+  4.                 use "${data}/mw_levels2014.dta",clear
+  5.                 keep if east==`e'
+  6.                 mkmat mw, matrix(min_mw)
+  7.         restore 
+  8.         
+.         //Load Siab Data
+.         use "${data}/siab_panel_mw_industry.dta", clear
+  9.         cap label define east_lab 0 "West" 1 "East" 
+ 10.         local east: label east_lab `e'
+ 11.         display"----------------------------------------------------------"
+ 12.         display"-#    Computing densities and counterfactual for `east' #-"
+ 13.         display"----------------------------------------------------------"
+ 14. 
+.         drop if female==1
+ 15.         keep if east==`e'
+ 16. 
+.         //Reduce dataset to needed comparison years
+.         keep if year==2008 | year==2014
+ 17. 
+.         //Generate Help variables for counters
+.         bys east year persnr: gen N_Pers = (_n==1)
+ 18.         bys east year betnr: gen N_Betr = (_n==1)
+ 19. 
+.         //Get Wage percentiles for 2008 and 2014 in a matrix
+.         //Tatsaechliche Aenderung an perzentilen. Wird verwendet um die Simulation weiter unten zu ueberpruefen
+.         preserve
+ 20.                 collapse (p15) p15 = mwage (p50) p50 = mwage (p85) p85 = mwage (sum) N_Pers (sum) N_Betr, by(year)
+ 21.                 quietly mkmat p15 p50 p85 N_Betr N_Pers, matrix(act_percentiles) rownames(year)
+ 22.         restore
+ 23. 
+.         //What are the actual percentiles in 2008 and 2014
+.         //HINWEIS: N_Pers ist die Anzahl an Personen für die Berechnung einer Ausgabe-Zeile
+.         //                 N_Betr ist die Anzahl der Betriebe für die Berechnung einer Ausgabe-Zeile
+.         matrix list act_percentiles
+ 24. 
+.         //Compute a scale for Kernel Density estimations
+.         //Define the bandwidth:
+.         scalar step_width = 25
+ 25.         //Get upper bound for the computation:
+.         quietly sum mwage, detail
+ 26.         scalar max_steps = round(r(p99)/step_width,1) + 1
+ 27.         //Ausgabe maximaler Schätzpunktezahl für die Kerndichteschätzungen
+.         display max_steps
+ 28.         
+.         //x is a wage point at which a density is estimated for every kernel density output line
+.         gen x = (_n-1)*step_width if _n<= max_steps
+ 29.         
+.         
+.         //Since there are not enough observations to estimate what i want for Steinkohlebergbau,
+.         //I drop the industry
+.         drop if mw_ind==8
+ 30.         
+.         //Ausgabe von Mindestlohnbranchengrößen
+.         tab mw_ind year, col matcell(mwind_sizes) nolabel
+ 31.         //Save the relative industry sizes in a matrix, since I need them for calculations later
+.         mata: st_matrix("total_obs", colsum(st_matrix("mwind_sizes")))
+ 32.         mata: st_matrix("rel_mwind", st_matrix("mwind_sizes"):/st_matrix("total_obs"))
+ 33.         //Ausgabe zur Überprüfung.
+.         //HINWEIS: Das sind Branchenanteile die identisch zur oberen Tabelle mit den absoluten Werten sind
+.         matrix list mwind_sizes
+ 34. 
+.         //Generate DFL weights
+.         //Hier wird ein Propensity Score fuer eine DFL Gewichtung berechnet
+.         gen period=(year==2014)
+ 35.         probit period i.age_q##i.educ, robust
+ 36.         predict prob1, p
+ 37.         sum period
+ 38.         gen pbar= r(mean)
+ 39.         //berechnung eines DFL-Gewichts
+.         gen phix =((1-prob)/prob1)*(pbar/(1-pbar)) if year==2008
+ 40.         
+.         //1a: Dichten berechnen
+.         //-----------------------
+.         
+.         //Compute 2008 and 2014 and 2014 counterfactuals
+.         foreach y in "2008" "2014"{
+ 41.                 forvalues i = 1/13{
+ 42.                         if `i' !=8{
+ 43.                                 display "---------------------------------"
+ 44.                                 local title: label mw_ind_lab `i'
+ 45.                                 //Dichten erzeugen
+.                                 kdensity mwage if year==`y' & mw_ind== `i', nograph gen(fx_mw`i'_`y') at(x)
+ 46.                                 quietly count if mw_ind==`i' & year==`y'
+ 47.                                 local r_count = r(N)
+ 48.                                 display as txt "Kerndichteschaetzung fuer `title' Lohnverteilung in `y'"
+ 49.                                 display as txt "Berechnet mit `r_count' Beobachtungen"
+ 50.                                 //Branchen-Counterfactual fuer 2014 berechnen
+.                                 if "`y'" == "2008"{
+ 51.                                 display "---------------------------------"
+ 52.                                         kdensity mwage if year==`y' & mw_ind== `i' [aweight=phix], nograph gen(phi_fx_mw`i'_`y') at(x)
+ 53.                                         quietly count if mw_ind==`i' & year==`y'
+ 54.                                         local cf_count = r(N)
+ 55.                                         display as txt "Gewichtete Kerndichteschaetzung fuer `title' Lohnverteilung in `y'"
+ 56.                                         display as txt "Berechnet mitmit `cf_count' Beobachtungen"
+ 57.                                 }
+ 58.                         }
+ 59.                 }
+ 60.         }
+ 61.         
+.         //1b: Dichten fuer Simulation zusammensetzen
+.         //--------------------------------------------
+.         
+.         //Generate industry counterfactuals. 2008 weighted to 2014 observables below minimum wage
+.         //2014 actual density above minimum wage
+.         forvalues i = 1/13{
+ 62.                 if `i' !=8{
+ 63.                         quietly gen fx_mw`i'_2014cf = phi_fx_mw`i'_2008 if x<=round(min_mw[`i',1],step_width)
+ 64.                         quietly replace fx_mw`i'_2014cf = fx_mw`i'_2014 if x>round(min_mw[`i',1],step_width)
+ 65.                 }
+ 66.         }
+ 67.         
+.         //1c. Kerndichteschaetzungen fuer Nicht-Mindestlohn-Industrien
+.         //--------------------------------------------------------------
+.         kdensity mwage if year==2008 & mw_ind==0, nograph gen(fx_mw0_2008) at(x)
+ 68.                 quietly count if year==2008 & mw_ind==0
+ 69.                 local N_fx_mw0_2008 = r(N)
+ 70.                 display "Kerndichteschaetzung fuer Nicht-Mindestlohnbranchen 2008"
+ 71.                 display "Zur Berechnung wurden `N_fx_mw0_2008' Beobachtungen verwendet"
+ 72.         kdensity mwage if year==2014 & mw_ind==0, nograph gen(fx_mw0_2014) at(x)
+ 73.                 quietly count if year==2014 & mw_ind==0
+ 74.                 local N_fx_mw0_2014 = r(N)
+ 75.                 display "Kerndichteschaetzung fuer Nicht-Mindestlohnbranchen 2008"
+ 76.                 display "Zur Berechnung wurden `N_fx_mw0_2014' Beobachtungen verwendet"
+ 77.         
+.         //1d: Zusammensetzen der Simulation aus den einzelnen kontrafaktischen Dichte
+.         //------------------------------------------------------------------------------
+.         
+.         //Add up industries to generate an overall counterfactual
+.         gen cf_2014=fx_mw0_2014 * rel_mwind[1,2]
+ 78.         replace  cf_2014 = cf_2014 + rel_mwind[2,2] * fx_mw1_2014cf
+ 79.         replace  cf_2014 = cf_2014 + rel_mwind[3,2] * fx_mw2_2014cf
+ 80.         replace  cf_2014 = cf_2014 + rel_mwind[4,2] * fx_mw3_2014cf
+ 81.         replace  cf_2014 = cf_2014 + rel_mwind[5,2] * fx_mw4_2014cf
+ 82.         replace  cf_2014 = cf_2014 + rel_mwind[6,2] * fx_mw5_2014cf
+ 83.         replace  cf_2014 = cf_2014 + rel_mwind[7,2] * fx_mw6_2014cf
+ 84.         replace  cf_2014 = cf_2014 + rel_mwind[8,2] * fx_mw7_2014cf
+ 85.         //Row shifts after 9 since i dropped industry 8
+.         replace  cf_2014 = cf_2014 + rel_mwind[9,2] * fx_mw9_2014cf
+ 86.         replace  cf_2014 = cf_2014 + rel_mwind[10,2] * fx_mw10_2014cf
+ 87.         replace  cf_2014 = cf_2014 + rel_mwind[11,2] * fx_mw11_2014cf
+ 88.         replace  cf_2014 = cf_2014 + rel_mwind[12,2] * fx_mw12_2014cf
+ 89.         replace  cf_2014 = cf_2014 + rel_mwind[13,2] * fx_mw13_2014cf
+ 90. 
+.         
+.         //1e: Echte Gesamtlohndichten (Spalte 2 und 3 in der Tabelle)
+.         //------------------------------------------------------------
+.         
+.         kdensity mwage if year==2008, nograph gen(fx_2008) at(x)
+ 91.                 quietly count if year==2008
+ 92.                 scalar N_2008 = r(N)
+ 93.         kdensity mwage if year==2014, nograph gen(fx_2014) at(x)
+ 94.                 quietly count if year==2014
+ 95.                 scalar N_2014 = r(N)
+ 96.         
+.         //Select only the needed stuff
+.         keep if x!=.
+ 97.         keep x cf_2014 fx_* phi_*
+ 98.         
+.     //Numerically integrate the densities of the distributions to CDF
+.         quietly integ cf_2014 x, gen(cdf_14cf)
+ 99.         quietly integ fx_2014 x, gen(cdf_14)
+100.         quietly integ fx_2008 x, gen(cdf_08)
+101. 
+. 
+.         //Store the actual distribution into scalars
+.         scalar s2008_p15 = act_percentiles[1,1]
+102.         scalar s2008_p50 = act_percentiles[1,2]
+103.         scalar s2008_p85 = act_percentiles[1,3]
+104.         scalar s2014_p15 = act_percentiles[2,1]
+105.         scalar s2014_p50 = act_percentiles[2,2]
+106.         scalar s2014_p85 = act_percentiles[2,3]
+107.         
+.         
+.         //Compute counterfactual percentiles
+.         foreach p in "10" "15" "50" "85"{
+108.                         local c = `p'/100
+109.                         //Implied 2014 counterfactual percentiles by CDF_14cf
+.                         quietly sum x if inrange(`c',cdf_14cf[_n-1],cdf_14cf) & cdf_14cf!=.
+110.                         scalar s2014_cf_p`p' = r(mean)
+111.                         //Implied  percentiles on CDF_14
+.                         quietly sum x if inrange(`c',cdf_14[_n-1],cdf_14) & cdf_14!=.
+112.                         scalar i2014_p`p' = r(mean)
+113.                         //Implied  percentiles on CDF_08
+.                         quietly sum x if inrange(`c',cdf_08[_n-1],cdf_08) & cdf_08!=.
+114.                         scalar i2008_p`p' = r(mean)
+115.         }
+116.         
+.         //Save Log Wage Gaps in scalars
+.         scalar lwgap2008   =  ln(s2008_p50)-ln(s2008_p15)
+117.         scalar lwgap2014   =  ln(s2014_p50)-ln(s2014_p15)
+118.         scalar lwgap2014cf =  ln(s2014_cf_p50)-ln(s2014_cf_p15)
+119.         
+.         
+.         matrix actual_2008_e`e' = (i2008_p10\s2008_p15\s2008_p50\lwgap2008)
+120.         matrix actual_2014_e`e'  = (i2014_p10\s2014_p15\s2014_p50\lwgap2014)
+121.         matrix counterfactual_2014_e`e'  = (s2014_cf_p10\s2014_cf_p15\s2014_cf_p50\lwgap2014cf)
+122.         
+.         //Ausgabe der Ergebnisse der kontrafaktischen Schätzung
+.         display ". matrix list actual_2008_e`e'"
+123.         matrix list actual_2008_e`e' 
+124.         display ". matrix list actual_2014_e`e'"
+125.         matrix list actual_2014_e`e' 
+126.         display ". matrix list counterfactual_2014_e`e'"
+127.         matrix list counterfactual_2014_e`e' 
+128.         
+.         
+.         /*========================================
+>                         Hauptausgabe ab hier:
+>         ========================================
+>         Hier werden die Ergebnisse der Kerndichteschaetzungen in diesem Do-File ausgegeben
+>         Die einzelnen Schritte in der Beschreibung enthalten immer in Klammern dahinter
+>         auch eine Angabe zum Punkt im Do-File in dem sie berechnet werde.
+>         
+>         Spalte 1 in der Tabelle ist eine Lohnskala fuer die Kerndichteschaetzungen.
+>         ---------
+>         Spalte 2 ist eine Kerndichteschaetzung fuer die Gesamtlohnverteilung in 2008.
+>         Spalte 3 ist eine Kerndichteschaetzung fuer die Gesamtlohnverteilung in 2014.
+>         Siehe (1e)
+>         
+>         ---------
+>         Spalte 4 ist eine Simulation der Lohndichte von 2014 in einem veränderten Szenario.
+>         Es wird ein kontrafaktisches Szenario für 2014 simuliert fuer den Fall, dass es
+>         keine neuen Branchenmindestloehne zwischen 2008 und 2014 gibt.
+>         Damit gibt die Simulation es eine veränderte  Variante von Spalte 3 aus.
+>         
+>         Die simulierte kontrafaktische Lohndichte, wird aus einzelnen Industrie-spezifischen
+>         Kerndichteschätzungen für Mindestlohnindustrien erzeugt.
+>         
+>         Zunächst werden dazu fuer Spalte 4 einzelne 2008er Industriedichteschätzugnen mit einer
+>         Gewichtung, die die Bildungs und Altersstruktur von 2014 (1a) abbildet berechnet.
+>         Dann werden neue Variablen erzeugt die fuer Werte der Lohn-Skala unter dem
+>         Branchenmindestlohnn mit dieser Schätzung gefuellt werden (1b). Fuer Werte
+>         ueber dem Branchenmindestlohn wird in diesen Variablen eine ungewichtete
+>         Dichteschaetzung fuer 2014 verwendet. Aus diesen gespeicherten kombinierten
+>         Einzelschaetzungen wird dann eine kontrafaktische Gesamt-Lohndichte erzeugt,
+>         in dem die einzelnen Branchen mit ihrem Anteil am Gesamtmarkt multipliziert
+>         und addiert werden (1d). Die Nicht-Mindestlohnindustrien gehen mit ihren 2014er
+>         Dichten ebenfalls in die Simulation ein (1c). Ich speichere fuer jede Teilberechnung oben
+>         die Beobachtungszahl und gebe sie einzeln aus.
+>         
+>         Insgesamt werden für die Simulation in Spalte 4 werden alle Beobachtungen in
+>         2008 und 2004 verwendet.
+>         */
+.         quietly mkmat x fx_2008 fx_2014 cf_2014, matrix(m_kdensity_e`e')
+129.         matrix colnames m_kdensity_e`e' = "Skala" "D_2008" "D_2014" "CF_2014"
+130.         display ". matrix list m_kdensity_e`e'"
+131.         matrix list m_kdensity_e`e'
+132.         
+.         display "Spalte 1 ist eine Lohnskala fuer die Kerndichteschaetzung"
+133.         display "Verwendete Beobachtungen für Spalte2:" N_2008
+134.         display "Verwendete Beobachtungen für Spalte3:" N_2014
+135.         display "Fuer die Simulation in Spalte 4 wurden " N_2014 + N_2008 " Beobachtungen verwendet"
+136.         display"-----------------------------------"
+137. }
+(/ observations deleted)
+(FDZ1489 SIAB Panel minimum wages - 18 Apr 2023 - 17:23:49)
+----------------------------------------------------------
+-#    Computing densities and counterfactual for west #-
+----------------------------------------------------------
+(1,209,589 observations deleted)
+(412,328 observations deleted)
+(1,634,184 observations deleted)
+
+act_percentiles[2,5]
+            p15        p50        p85     N_Betr     N_Pers
+2008   2188.354  3347.2837   5570.084     104999     200732
+2014   2243.293  3466.1628  5824.1304     107401     206687
+440
+(406,979 missing values generated)
+(637 observations deleted)
+
++-------------------+
+| Key               |
+|-------------------|
+|     frequency     |
+| column percentage |
++-------------------+
+
+           |         year
+    mw_ind |      2008       2014 |     Total
+-----------+----------------------+----------
+         0 |   174,164    179,349 |   353,513 
+           |     86.97      86.84 |     86.90 
+-----------+----------------------+----------
+         1 |     1,577      1,793 |     3,370 
+           |      0.79       0.87 |      0.83 
+-----------+----------------------+----------
+         2 |     6,862      6,888 |    13,750 
+           |      3.43       3.34 |      3.38 
+-----------+----------------------+----------
+         3 |     1,146      1,140 |     2,286 
+           |      0.57       0.55 |      0.56 
+-----------+----------------------+----------
+         4 |       848        879 |     1,727 
+           |      0.42       0.43 |      0.42 
+-----------+----------------------+----------
+         5 |       297        297 |       594 
+           |      0.15       0.14 |      0.15 
+-----------+----------------------+----------
+         6 |     5,489      5,780 |    11,269 
+           |      2.74       2.80 |      2.77 
+-----------+----------------------+----------
+         7 |       143        140 |       283 
+           |      0.07       0.07 |      0.07 
+-----------+----------------------+----------
+         9 |     5,526      5,710 |    11,236 
+           |      2.76       2.76 |      2.76 
+-----------+----------------------+----------
+        10 |     1,869      2,070 |     3,939 
+           |      0.93       1.00 |      0.97 
+-----------+----------------------+----------
+        11 |     1,334      1,377 |     2,711 
+           |      0.67       0.67 |      0.67 
+-----------+----------------------+----------
+        12 |       786        848 |     1,634 
+           |      0.39       0.41 |      0.40 
+-----------+----------------------+----------
+        13 |       208        262 |       470 
+           |      0.10       0.13 |      0.12 
+-----------+----------------------+----------
+     Total |   200,249    206,533 |   406,782 
+           |    100.00     100.00 |    100.00 
+
+mwind_sizes[13,2]
+         c1      c2
+ r1  174164  179349
+ r2    1577    1793
+ r3    6862    6888
+ r4    1146    1140
+ r5     848     879
+ r6     297     297
+ r7    5489    5780
+ r8     143     140
+ r9    5526    5710
+r10    1869    2070
+r11    1334    1377
+r12     786     848
+r13     208     262
+
+Iteration 0:   log pseudolikelihood = -278069.24  
+Iteration 1:   log pseudolikelihood = -274903.93  
+Iteration 2:   log pseudolikelihood = -274903.56  
+Iteration 3:   log pseudolikelihood = -274903.56  
+
+Probit regression                                      Number of obs = 401,198
+                                                       Wald chi2(23) = 6282.34
+                                                       Prob > chi2   =  0.0000
+Log pseudolikelihood = -274903.56                      Pseudo R2     =  0.0114
+
+----------------------------------------------------------------------------------
+                 |               Robust
+          period | Coefficient  std. err.      z    P>|z|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+           age_q |
+       28 to 31  |   .0028393   .0279337     0.10   0.919    -.0519098    .0575883
+       32 to 36  |  -.0857816   .0288071    -2.98   0.003    -.1422425   -.0293208
+       37 to 40  |  -.2150361   .0309644    -6.94   0.000    -.2757253   -.1543469
+       41 to 44  |  -.2083526   .0293249    -7.10   0.000    -.2658284   -.1508769
+       45 to 49  |   -.076115     .02701    -2.82   0.005    -.1290536   -.0231765
+       50 to 54  |   .0617648   .0282466     2.19   0.029     .0064024    .1171271
+       55 to 62  |   .1281233   .0284891     4.50   0.000     .0722856    .1839609
+                 |
+            educ |
+         Middle  |   .0813693   .0178199     4.57   0.000     .0464429    .1162957
+           High  |    .269094   .0298189     9.02   0.000     .2106501    .3275379
+                 |
+      age_q#educ |
+28 to 31#Middle  |   .0270927   .0296147     0.91   0.360     -.030951    .0851364
+  28 to 31#High  |   .0099606   .0397138     0.25   0.802     -.067877    .0877983
+32 to 36#Middle  |   .0695869   .0303818     2.29   0.022     .0100397    .1291341
+  32 to 36#High  |   .0717634   .0399574     1.80   0.072    -.0065517    .1500784
+37 to 40#Middle  |   .0098301   .0324911     0.30   0.762    -.0538513    .0735114
+  37 to 40#High  |  -.0741783   .0417361    -1.78   0.076    -.1559795     .007623
+41 to 44#Middle  |   .0879683    .030807     2.86   0.004     .0275877     .148349
+  41 to 44#High  |   .0086364   .0403753     0.21   0.831    -.0704978    .0877707
+45 to 49#Middle  |   .1547517   .0284489     5.44   0.000     .0989928    .2105105
+  45 to 49#High  |   .1329457   .0384135     3.46   0.001     .0576566    .2082349
+50 to 54#Middle  |    .113415   .0297212     3.82   0.000     .0551624    .1716676
+  50 to 54#High  |   .0206865   .0397296     0.52   0.603    -.0571821    .0985551
+55 to 62#Middle  |   .1545425   .0300216     5.15   0.000     .0957012    .2133838
+  55 to 62#High  |   .0844024   .0401943     2.10   0.036     .0056231    .1631818
+                 |
+           _cons |  -.1194736   .0164191    -7.28   0.000    -.1516545   -.0872928
+----------------------------------------------------------------------------------
+(5,584 missing values generated)
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+      period |    406,782     .507724     .499941          0          1
+(208,187 missing values generated)
+---------------------------------
+Kerndichteschaetzung fuer Abfallwirtschaft Lohnverteilung in 2008
+Berechnet mit 1577 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Abfallwirtschaft Lohnverteilung in 2008
+Berechnet mitmit 1577 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Leiharbeit/Zeitarbeit Lohnverteilung in 2008
+Berechnet mit 6862 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Leiharbeit/Zeitarbeit Lohnverteilung in 2008
+Berechnet mitmit 6862 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Sicherheitsdienstleistungen Lohnverteilung in 2008
+Berechnet mit 1146 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Sicherheitsdienstleistungen Lohnverteilung in 2008
+Berechnet mitmit 1146 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Gebaeudereinigung Lohnverteilung in 2008
+Berechnet mit 848 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Gebaeudereinigung Lohnverteilung in 2008
+Berechnet mitmit 848 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Weiterbildungsdienstleitungen Lohnverteilung in 2008
+Berechnet mit 297 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Weiterbildungsdienstleitungen Lohnverteilung in 2008
+Berechnet mitmit 297 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Pflege Lohnverteilung in 2008
+Berechnet mit 5489 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Pflege Lohnverteilung in 2008
+Berechnet mitmit 5489 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Waescherei Lohnverteilung in 2008
+Berechnet mit 143 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Waescherei Lohnverteilung in 2008
+Berechnet mitmit 143 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Bauhauptgewerbe Lohnverteilung in 2008
+Berechnet mit 5526 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Bauhauptgewerbe Lohnverteilung in 2008
+Berechnet mitmit 5526 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Elektroinstalation Lohnverteilung in 2008
+Berechnet mit 1869 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Elektroinstalation Lohnverteilung in 2008
+Berechnet mitmit 1869 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Maler Lohnverteilung in 2008
+Berechnet mit 1334 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Maler Lohnverteilung in 2008
+Berechnet mitmit 1334 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Dachdecker Lohnverteilung in 2008
+Berechnet mit 786 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Dachdecker Lohnverteilung in 2008
+Berechnet mitmit 786 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Geruestbauer Lohnverteilung in 2008
+Berechnet mit 208 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Geruestbauer Lohnverteilung in 2008
+Berechnet mitmit 208 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Abfallwirtschaft Lohnverteilung in 2014
+Berechnet mit 1793 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Leiharbeit/Zeitarbeit Lohnverteilung in 2014
+Berechnet mit 6888 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Sicherheitsdienstleistungen Lohnverteilung in 2014
+Berechnet mit 1140 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Gebaeudereinigung Lohnverteilung in 2014
+Berechnet mit 879 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Weiterbildungsdienstleitungen Lohnverteilung in 2014
+Berechnet mit 297 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Pflege Lohnverteilung in 2014
+Berechnet mit 5780 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Waescherei Lohnverteilung in 2014
+Berechnet mit 140 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Bauhauptgewerbe Lohnverteilung in 2014
+Berechnet mit 5710 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Elektroinstalation Lohnverteilung in 2014
+Berechnet mit 2070 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Maler Lohnverteilung in 2014
+Berechnet mit 1377 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Dachdecker Lohnverteilung in 2014
+Berechnet mit 848 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Geruestbauer Lohnverteilung in 2014
+Berechnet mit 262 Beobachtungen
+Kerndichteschaetzung fuer Nicht-Mindestlohnbranchen 2008
+Zur Berechnung wurden 174164 Beobachtungen verwendet
+Kerndichteschaetzung fuer Nicht-Mindestlohnbranchen 2008
+Zur Berechnung wurden 179349 Beobachtungen verwendet
+(406,342 missing values generated)
+(431 real changes made)
+(421 real changes made)
+(305 real changes made)
+(379 real changes made)
+(422 real changes made)
+(440 real changes made)
+(310 real changes made)
+(435 real changes made)
+(418 real changes made)
+(286 real changes made)
+(347 real changes made)
+(302 real changes made)
+(406,342 observations deleted)
+. matrix list actual_2008_e0
+
+actual_2008_e0[4,1]
+           c1
+r1       1925
+r2   2188.354
+r3  3347.2837
+r4  .42499951
+. matrix list actual_2014_e0
+
+actual_2014_e0[4,1]
+           c1
+r1       2025
+r2   2243.293
+r3  3466.1628
+r4  .43510331
+. matrix list counterfactual_2014_e0
+
+counterfactual_2014_e0[4,1]
+           c1
+r1       1975
+r2       2200
+r3       3450
+r4  .44991687
+. matrix list m_kdensity_e0
+
+m_kdensity_e0[440,4]
+          Skala     D_2008     D_2014    CF_2014
+  r1          0          0          0  6.706e-08
+  r2         25          0  1.518e-09  1.027e-07
+  r3         50  8.384e-09  3.017e-08  1.683e-07
+  r4         75  5.548e-08  1.022e-07  2.989e-07
+  r5        100  3.266e-07  2.508e-07  4.787e-07
+  r6        125  8.101e-07  4.597e-07  7.420e-07
+  r7        150  1.454e-06  7.825e-07  1.049e-06
+  r8        175  2.265e-06  1.131e-06  1.397e-06
+  r9        200  3.166e-06  1.516e-06  1.779e-06
+ r10        225  4.252e-06  1.929e-06  2.196e-06
+ r11        250  5.441e-06  2.375e-06  2.692e-06
+ r12        275  6.596e-06  2.879e-06  3.233e-06
+ r13        300  7.726e-06  3.394e-06  3.780e-06
+ r14        325  8.801e-06  3.901e-06  4.344e-06
+ r15        350  9.875e-06  4.400e-06  4.911e-06
+ r16        375  .00001102  4.877e-06  5.468e-06
+ r17        400  .00001208  5.349e-06  6.044e-06
+ r18        425  .00001311  5.805e-06  6.615e-06
+ r19        450  .00001401  6.252e-06  7.170e-06
+ r20        475  .00001479  6.703e-06  7.704e-06
+ r21        500  .00001548  7.148e-06  8.228e-06
+ r22        525    .000016  7.568e-06  8.804e-06
+ r23        550  .00001634  8.029e-06  9.343e-06
+ r24        575  .00001655  8.422e-06  9.840e-06
+ r25        600   .0000166  8.785e-06  .00001031
+ r26        625  .00001677  9.119e-06  .00001078
+ r27        650  .00001721  9.484e-06  .00001125
+ r28        675  .00001766  9.861e-06  .00001173
+ r29        700  .00001823  .00001027  .00001227
+ r30        725  .00001886  .00001077  .00001297
+ r31        750  .00001974  .00001144  .00001383
+ r32        775  .00002073  .00001217  .00001465
+ r33        800   .0000217  .00001291  .00001547
+ r34        825  .00002266  .00001367  .00001637
+ r35        850  .00002389  .00001453  .00001738
+ r36        875  .00002528  .00001542  .00001852
+ r37        900  .00002697   .0000163  .00001971
+ r38        925  .00002879  .00001721  .00002103
+ r39        950  .00003083  .00001827  .00002259
+ r40        975  .00003308   .0000194  .00002431
+ r41       1000  .00003547  .00002065   .0000264
+ r42       1025  .00003803  .00002202  .00002888
+ r43       1050  .00004076   .0000236  .00003174
+ r44       1075  .00004386  .00002539  .00003509
+ r45       1100  .00004709  .00002752  .00003886
+ r46       1125  .00005043     .00003  .00004305
+ r47       1150  .00005385  .00003279   .0000476
+ r48       1175  .00005758  .00003583  .00005233
+ r49       1200  .00006123  .00003905  .00005713
+ r50       1225  .00006477  .00004237  .00006192
+ r51       1250  .00006822  .00004593  .00006663
+ r52       1275  .00007175  .00004984  .00007091
+ r53       1300  .00007523  .00005382  .00007467
+ r54       1325  .00007844  .00005796  .00007801
+ r55       1350  .00008143   .0000623  .00008126
+ r56       1375  .00008435  .00006684  .00008418
+ r57       1400  .00008754   .0000713  .00008671
+ r58       1425   .0000907  .00007565   .0000891
+ r59       1450  .00009372  .00007998  .00009162
+ r60       1475  .00009656   .0000843  .00009404
+ r61       1500  .00009941  .00008847  .00009651
+ r62       1525  .00010228  .00009271   .0000992
+ r63       1550  .00010506  .00009692  .00010244
+ r64       1575  .00010775  .00010131  .00010574
+ r65       1600  .00011062  .00010555  .00010919
+ r66       1625  .00011368  .00010976  .00011264
+ r67       1650  .00011678  .00011399   .0001163
+ r68       1675  .00011997  .00011853  .00012004
+ r69       1700  .00012336  .00012311  .00012386
+ r70       1725  .00012705  .00012775  .00012786
+ r71       1750  .00013082  .00013261  .00013225
+ r72       1775  .00013466  .00013785  .00013688
+ r73       1800  .00013859  .00014305  .00014153
+ r74       1825  .00014266  .00014831  .00014603
+ r75       1850  .00014694  .00015391  .00015105
+ r76       1875  .00015137  .00015959  .00015633
+ r77       1900  .00015595  .00016516  .00016158
+ r78       1925  .00016086  .00017069  .00016667
+ r79       1950  .00016626  .00017641   .0001721
+ r80       1975  .00017176  .00018221  .00017768
+ r81       2000  .00017741  .00018775  .00018317
+ r82       2025  .00018296  .00019314   .0001886
+ r83       2050  .00018867  .00019865  .00019399
+ r84       2075  .00019442  .00020403  .00020492
+ r85       2100  .00020003  .00020921  .00021029
+ r86       2125  .00020548   .0002142  .00021534
+ r87       2150  .00021105  .00021925  .00022071
+ r88       2175  .00021676  .00022419  .00022515
+ r89       2200  .00022237  .00022896  .00022983
+ r90       2225  .00022808  .00023356  .00023438
+ r91       2250  .00023407  .00023823   .0002391
+ r92       2275  .00024015  .00024291  .00024391
+ r93       2300  .00024609  .00024748  .00024854
+ r94       2325    .000252  .00025197  .00025304
+ r95       2350   .0002577  .00025662  .00025758
+ r96       2375  .00026333  .00026119  .00026235
+ r97       2400  .00026894   .0002656  .00026712
+ r98       2425  .00027454  .00026992  .00027111
+ r99       2450  .00028021  .00027407  .00027527
+r100       2475  .00028584  .00027797  .00027957
+r101       2500  .00029129  .00028164  .00028354
+r102       2525  .00029658  .00028508  .00028723
+r103       2550  .00030159  .00028844  .00029067
+r104       2575  .00030626  .00029149  .00029401
+r105       2600  .00031047  .00029415  .00029682
+r106       2625  .00031429  .00029643  .00029928
+r107       2650  .00031766  .00029844  .00030178
+r108       2675  .00032053  .00030013  .00030408
+r109       2700  .00032314  .00030143  .00030257
+r110       2725  .00032533  .00030238  .00030366
+r111       2750  .00032718  .00030308  .00030432
+r112       2775   .0003288  .00030344  .00030481
+r113       2800  .00033007  .00030355  .00030369
+r114       2825   .0003308  .00030338  .00030335
+r115       2850  .00033122  .00030315  .00030266
+r116       2875  .00033133  .00030286  .00030195
+r117       2900  .00033096  .00030236  .00030122
+r118       2925  .00033023  .00030165  .00030035
+r119       2950  .00032923  .00030074   .0002994
+r120       2975  .00032796  .00029979  .00029857
+r121       3000  .00032647  .00029888  .00029779
+r122       3025  .00032467  .00029786  .00029689
+r123       3050  .00032265  .00029675  .00029574
+r124       3075  .00032036  .00029553   .0002946
+r125       3100  .00031788  .00029428  .00029337
+r126       3125  .00031511   .0002929  .00029197
+r127       3150  .00031218  .00029141  .00029044
+r128       3175  .00030931   .0002897  .00028876
+r129       3200  .00030627  .00028756  .00028685
+r130       3225  .00030319  .00028524  .00028459
+r131       3250  .00030001  .00028282  .00028215
+r132       3275  .00029678  .00028032  .00027978
+r133       3300  .00029331  .00027785  .00027727
+r134       3325   .0002897  .00027524  .00027469
+r135       3350  .00028591   .0002725   .0002721
+r136       3375  .00028205  .00026982  .00026948
+r137       3400  .00027817  .00026714  .00026697
+r138       3425  .00027423  .00026454  .00026441
+r139       3450  .00027021  .00026186  .00026172
+r140       3475  .00026622  .00025906  .00025909
+r141       3500   .0002621  .00025632  .00025633
+r142       3525  .00025798  .00025346  .00025364
+r143       3550  .00025382  .00025061  .00025074
+r144       3575  .00024979  .00024784  .00024786
+r145       3600  .00024587  .00024514  .00024503
+r146       3625  .00024192  .00024242  .00024214
+r147       3650  .00023808  .00023955  .00023921
+r148       3675  .00023415   .0002367  .00023629
+r149       3700  .00023022  .00023388  .00023342
+r150       3725  .00022641  .00023099  .00023049
+r151       3750  .00022285  .00022793  .00022748
+r152       3775  .00021954  .00022477  .00022435
+r153       3800  .00021626  .00022161  .00022121
+r154       3825  .00021302  .00021836  .00021803
+r155       3850  .00020967  .00021506  .00021474
+r156       3875  .00020629   .0002118  .00021143
+r157       3900   .0002029  .00020844  .00020816
+r158       3925   .0001995  .00020504  .00020485
+r159       3950  .00019612  .00020169  .00020151
+r160       3975  .00019277  .00019837  .00019822
+r161       4000  .00018957   .0001952  .00019501
+r162       4025  .00018647  .00019198  .00019184
+r163       4050  .00018346  .00018866   .0001887
+r164       4075  .00018041  .00018559  .00018562
+r165       4100  .00017736  .00018258  .00018268
+r166       4125  .00017458  .00017972  .00017979
+r167       4150  .00017189  .00017687  .00017698
+r168       4175  .00016933  .00017412  .00017429
+r169       4200  .00016678  .00017144  .00017171
+r170       4225   .0001642  .00016881  .00016911
+r171       4250   .0001617  .00016617  .00016645
+r172       4275  .00015935  .00016358  .00016376
+r173       4300  .00015716  .00016098  .00016126
+r174       4325    .000155  .00015848   .0001588
+r175       4350  .00015294  .00015605  .00015638
+r176       4375  .00015075  .00015373  .00015405
+r177       4400  .00014852  .00015153  .00015183
+r178       4425  .00014622  .00014939  .00014965
+r179       4450  .00014399  .00014728  .00014752
+r180       4475  .00014173  .00014521  .00014546
+r181       4500  .00013952  .00014323  .00014343
+r182       4525  .00013747   .0001413  .00014147
+r183       4550  .00013549  .00013941  .00013953
+r184       4575  .00013356  .00013751  .00013757
+r185       4600  .00013166  .00013557  .00013563
+r186       4625  .00012963  .00013353  .00013371
+r187       4650  .00012765  .00013162  .00013175
+r188       4675   .0001258  .00012968  .00012988
+r189       4700  .00012407  .00012783  .00012807
+r190       4725  .00012236  .00012605  .00012637
+r191       4750  .00012073  .00012441  .00012476
+r192       4775  .00011909  .00012297  .00012336
+r193       4800  .00011757  .00012172  .00012212
+r194       4825  .00011606  .00012053  .00012092
+r195       4850  .00011472  .00011932  .00011966
+r196       4875  .00011348  .00011804  .00011832
+r197       4900  .00011212  .00011685  .00011703
+r198       4925  .00011074   .0001157  .00011582
+r199       4950  .00010925  .00011454   .0001146
+r200       4975  .00010775  .00011342  .00011343
+r201       5000  .00010635  .00011228  .00011235
+r202       5025  .00010501   .0001112  .00011125
+r203       5050  .00010378  .00011016  .00011013
+r204       5075  .00010261   .0001091  .00010908
+r205       5100  .00010146  .00010806  .00010804
+r206       5125  .00010032  .00010705  .00010701
+r207       5150  .00009907  .00010601  .00010599
+r208       5175  .00009778  .00010491  .00010492
+r209       5200  .00009659  .00010378  .00010391
+r210       5225  .00009555  .00010278  .00010302
+r211       5250  .00009467  .00010183  .00010221
+r212       5275  .00009392  .00010093  .00010142
+r213       5300  .00009315  .00010023  .00010081
+r214       5325  .00009248  .00009974  .00010025
+r215       5350  .00009188  .00009931  .00009975
+r216       5375  .00009146  .00009896  .00009928
+r217       5400  .00009134  .00009862  .00009884
+r218       5425  .00009125  .00009823  .00009837
+r219       5450  .00009135  .00009775  .00009795
+r220       5475  .00009166  .00009729  .00009749
+r221       5500  .00009197  .00009685    .000097
+r222       5525  .00009235  .00009638  .00009657
+r223       5550  .00009264  .00009597  .00009614
+r224       5575  .00009261  .00009553  .00009569
+r225       5600  .00009253  .00009515  .00009531
+r226       5625  .00009225  .00009485  .00009498
+r227       5650  .00009159  .00009454  .00009478
+r228       5675  .00009051  .00009445  .00009492
+r229       5700  .00008908  .00009487  .00009554
+r230       5725  .00008736  .00009576  .00009642
+r231       5750  .00008533  .00009682  .00009721
+r232       5775  .00008309  .00009763  .00009774
+r233       5800  .00008074  .00009824    .000098
+r234       5825   .0000783  .00009858  .00009802
+r235       5850  .00007579  .00009858  .00009773
+r236       5875  .00007316  .00009831  .00009709
+r237       5900   .0000705  .00009775  .00009631
+r238       5925  .00006802  .00009684  .00009538
+r239       5950  .00006566  .00009564  .00009421
+r240       5975  .00006345  .00009414  .00009283
+r241       6000  .00006165  .00009237  .00009119
+r242       6025  .00006014  .00009028  .00008925
+r243       6050   .0000589  .00008793  .00008703
+r244       6075  .00005788   .0000853  .00008461
+r245       6100  .00005686   .0000824  .00008195
+r246       6125  .00005609  .00007935  .00007917
+r247       6150  .00005549  .00007615  .00007635
+r248       6175  .00005487   .0000729  .00007343
+r249       6200  .00005421  .00006967  .00007051
+r250       6225  .00005357  .00006645  .00006756
+r251       6250   .0000529  .00006342  .00006465
+r252       6275  .00005213    .000061  .00006196
+r253       6300   .0000513  .00005927  .00005987
+r254       6325  .00005043  .00005811  .00005839
+r255       6350  .00004965  .00005715  .00005734
+r256       6375  .00004896  .00005636  .00005647
+r257       6400  .00004824  .00005569  .00005578
+r258       6425   .0000475  .00005509  .00005517
+r259       6450  .00004677  .00005446  .00005453
+r260       6475  .00004605   .0000537  .00005383
+r261       6500  .00004535   .0000529  .00005305
+r262       6525  .00004466  .00005211  .00005223
+r263       6550    .000044  .00005134  .00005144
+r264       6575  .00004331  .00005064  .00005067
+r265       6600   .0000426  .00004997  .00004999
+r266       6625  .00004193  .00004929  .00004932
+r267       6650  .00004138  .00004861  .00004861
+r268       6675  .00004082  .00004785  .00004786
+r269       6700  .00004033  .00004703  .00004704
+r270       6725  .00003984   .0000462  .00004623
+r271       6750  .00003943  .00004545  .00004545
+r272       6775  .00003908  .00004471  .00004474
+r273       6800  .00003872  .00004407  .00004409
+r274       6825  .00003833  .00004343  .00004349
+r275       6850  .00003787   .0000428  .00004287
+r276       6875  .00003749  .00004216  .00004225
+r277       6900  .00003706  .00004152  .00004161
+r278       6925  .00003668  .00004086  .00004097
+r279       6950  .00003632  .00004024  .00004038
+r280       6975  .00003592  .00003971  .00003982
+r281       7000  .00003549  .00003926  .00003932
+r282       7025  .00003504  .00003886  .00003884
+r283       7050  .00003459  .00003844  .00003837
+r284       7075  .00003419  .00003799  .00003788
+r285       7100  .00003379  .00003753  .00003743
+r286       7125  .00003333  .00003705  .00003701
+r287       7150  .00003286  .00003661  .00003659
+r288       7175  .00003243  .00003618  .00003613
+r289       7200  .00003195  .00003573  .00003568
+r290       7225  .00003148   .0000353  .00003528
+r291       7250  .00003097  .00003485  .00003489
+r292       7275  .00003043   .0000344  .00003449
+r293       7300  .00002993  .00003393  .00003408
+r294       7325  .00002945  .00003347  .00003361
+r295       7350  .00002892  .00003296  .00003316
+r296       7375  .00002839  .00003253  .00003272
+r297       7400   .0000279  .00003215  .00003235
+r298       7425   .0000274  .00003182  .00003198
+r299       7450  .00002696  .00003149   .0000316
+r300       7475  .00002654  .00003119  .00003123
+r301       7500  .00002614  .00003084  .00003083
+r302       7525  .00002573  .00003046   .0000304
+r303       7550  .00002535  .00003009  .00002999
+r304       7575  .00002498  .00002973   .0000296
+r305       7600  .00002462  .00002936  .00002923
+r306       7625  .00002431  .00002897  .00002885
+r307       7650    .000024  .00002854  .00002848
+r308       7675   .0000237  .00002809  .00002806
+r309       7700  .00002345  .00002764  .00002764
+r310       7725  .00002321  .00002723  .00002723
+r311       7750  .00002295  .00002682  .00002682
+r312       7775  .00002268  .00002637  .00002645
+r313       7800  .00002236  .00002594  .00002605
+r314       7825  .00002207  .00002556  .00002567
+r315       7850   .0000218  .00002519  .00002529
+r316       7875  .00002152  .00002482   .0000249
+r317       7900  .00002121  .00002444  .00002452
+r318       7925   .0000209  .00002403  .00002416
+r319       7950  .00002059  .00002365  .00002378
+r320       7975  .00002032  .00002331  .00002342
+r321       8000  .00002003  .00002302   .0000231
+r322       8025  .00001978  .00002274  .00002282
+r323       8050  .00001954  .00002249  .00002255
+r324       8075  .00001932  .00002225  .00002231
+r325       8100  .00001912  .00002199  .00002203
+r326       8125   .0000189   .0000217  .00002174
+r327       8150  .00001865  .00002142  .00002142
+r328       8175  .00001839  .00002111  .00002109
+r329       8200  .00001816   .0000208  .00002075
+r330       8225  .00001795  .00002049  .00002042
+r331       8250  .00001773  .00002018  .00002008
+r332       8275  .00001747  .00001984  .00001974
+r333       8300  .00001719   .0000195  .00001939
+r334       8325   .0000169  .00001912  .00001904
+r335       8350  .00001665  .00001875  .00001867
+r336       8375  .00001643   .0000184  .00001834
+r337       8400  .00001623  .00001812  .00001807
+r338       8425  .00001602   .0000179  .00001787
+r339       8450  .00001584   .0000177  .00001768
+r340       8475  .00001569  .00001749  .00001749
+r341       8500  .00001554  .00001727  .00001727
+r342       8525  .00001539  .00001705  .00001707
+r343       8550  .00001526  .00001684  .00001688
+r344       8575  .00001509  .00001664   .0000167
+r345       8600  .00001491  .00001646  .00001652
+r346       8625  .00001476  .00001629  .00001632
+r347       8650  .00001463  .00001612  .00001615
+r348       8675  .00001449  .00001598  .00001601
+r349       8700  .00001435  .00001585  .00001588
+r350       8725  .00001423  .00001573  .00001575
+r351       8750  .00001413  .00001562  .00001561
+r352       8775  .00001403   .0000155  .00001548
+r353       8800  .00001389  .00001539  .00001535
+r354       8825  .00001372  .00001529  .00001522
+r355       8850  .00001356  .00001516  .00001509
+r356       8875   .0000134  .00001499  .00001495
+r357       8900  .00001325   .0000148  .00001477
+r358       8925  .00001306  .00001458  .00001456
+r359       8950  .00001288  .00001434  .00001436
+r360       8975  .00001271  .00001414  .00001416
+r361       9000  .00001254  .00001396  .00001397
+r362       9025  .00001241  .00001383  .00001383
+r363       9050  .00001231  .00001371  .00001368
+r364       9075  .00001221  .00001355  .00001353
+r365       9100  .00001207  .00001337  .00001336
+r366       9125  .00001189  .00001318  .00001318
+r367       9150  .00001171    .000013  .00001301
+r368       9175  .00001152  .00001285  .00001285
+r369       9200  .00001134  .00001268  .00001269
+r370       9225  .00001117  .00001248  .00001251
+r371       9250  .00001101   .0000123  .00001233
+r372       9275  .00001086  .00001212  .00001216
+r373       9300  .00001072  .00001198    .000012
+r374       9325  .00001057  .00001182  .00001185
+r375       9350  .00001039  .00001165  .00001167
+r376       9375  .00001024  .00001146  .00001151
+r377       9400  .00001012  .00001132  .00001134
+r378       9425     .00001  .00001116  .00001119
+r379       9450  9.901e-06  .00001099  .00001101
+r380       9475  9.819e-06  .00001083  .00001082
+r381       9500  9.731e-06  .00001064  .00001063
+r382       9525  9.659e-06  .00001043  .00001043
+r383       9550  9.579e-06  .00001025  .00001023
+r384       9575  9.524e-06  .00001005  .00001003
+r385       9600  9.490e-06  9.860e-06  9.842e-06
+r386       9625  9.449e-06  9.686e-06  9.670e-06
+r387       9650  9.412e-06  9.503e-06  9.520e-06
+r388       9675  9.385e-06  9.335e-06  9.359e-06
+r389       9700  9.336e-06  9.139e-06  9.171e-06
+r390       9725  9.283e-06  8.946e-06  8.989e-06
+r391       9750  9.229e-06  8.779e-06  8.829e-06
+r392       9775  9.171e-06  8.627e-06  8.693e-06
+r393       9800  9.112e-06  8.494e-06  8.572e-06
+r394       9825  9.044e-06  8.375e-06  8.465e-06
+r395       9850  8.950e-06  8.281e-06  8.373e-06
+r396       9875  8.823e-06  8.219e-06  8.288e-06
+r397       9900  8.670e-06  8.146e-06  8.203e-06
+r398       9925  8.520e-06  8.057e-06  8.112e-06
+r399       9950  8.366e-06  7.964e-06  8.026e-06
+r400       9975  8.233e-06  7.920e-06  7.946e-06
+r401      10000  8.099e-06  7.874e-06  7.888e-06
+r402      10025  7.945e-06  7.835e-06  7.831e-06
+r403      10050  7.788e-06  7.790e-06  7.756e-06
+r404      10075  7.638e-06  7.724e-06  7.679e-06
+r405      10100  7.460e-06  7.653e-06  7.584e-06
+r406      10125  7.316e-06  7.579e-06  7.506e-06
+r407      10150  7.193e-06  7.500e-06  7.439e-06
+r408      10175  7.065e-06  7.409e-06  7.348e-06
+r409      10200  6.962e-06  7.308e-06  7.243e-06
+r410      10225  6.865e-06  7.203e-06  7.147e-06
+r411      10250  6.806e-06  7.121e-06  7.068e-06
+r412      10275  6.754e-06  7.038e-06  7.001e-06
+r413      10300  6.716e-06  6.928e-06  6.905e-06
+r414      10325  6.677e-06  6.824e-06  6.804e-06
+r415      10350  6.647e-06  6.721e-06  6.714e-06
+r416      10375  6.612e-06  6.642e-06  6.653e-06
+r417      10400  6.566e-06  6.595e-06  6.603e-06
+r418      10425  6.497e-06  6.543e-06  6.543e-06
+r419      10450  6.438e-06  6.493e-06  6.510e-06
+r420      10475  6.375e-06  6.445e-06  6.470e-06
+r421      10500  6.317e-06  6.375e-06  6.422e-06
+r422      10525  6.244e-06  6.304e-06  6.338e-06
+r423      10550  6.151e-06  6.217e-06  6.244e-06
+r424      10575  6.053e-06  6.135e-06  6.162e-06
+r425      10600  5.987e-06  6.055e-06  6.092e-06
+r426      10625  5.909e-06  5.994e-06  6.024e-06
+r427      10650  5.840e-06  5.919e-06  5.945e-06
+r428      10675  5.771e-06  5.835e-06  5.846e-06
+r429      10700  5.677e-06  5.739e-06  5.749e-06
+r430      10725  5.565e-06  5.657e-06  5.639e-06
+r431      10750  5.444e-06  5.572e-06  5.539e-06
+r432      10775  5.342e-06  5.465e-06  5.440e-06
+r433      10800  5.247e-06  5.345e-06  5.336e-06
+r434      10825  5.162e-06  5.230e-06  5.230e-06
+r435      10850  5.073e-06  5.133e-06  5.132e-06
+r436      10875  5.007e-06  5.034e-06  5.032e-06
+r437      10900  4.953e-06  4.911e-06  4.914e-06
+r438      10925  4.898e-06  4.786e-06  4.793e-06
+r439      10950  4.841e-06  4.675e-06  4.684e-06
+r440      10975  4.788e-06  4.606e-06  4.596e-06
+Spalte 1 ist eine Lohnskala fuer die Kerndichteschaetzung
+Verwendete Beobachtungen für Spalte2:200249
+Verwendete Beobachtungen für Spalte3:206533
+Fuer die Simulation in Spalte 4 wurden 406782 Beobachtungen verwendet
+-----------------------------------
+(/ observations deleted)
+(FDZ1489 SIAB Panel minimum wages - 18 Apr 2023 - 17:23:49)
+----------------------------------------------------------
+-#    Computing densities and counterfactual for east #-
+----------------------------------------------------------
+(1,209,589 observations deleted)
+(2,041,603 observations deleted)
+(330,570 observations deleted)
+
+act_percentiles[2,5]
+            p15        p50        p85     N_Betr     N_Pers
+2008  1510.5197  2297.3728  4027.7219      25491      39869
+2014  1630.3258  2435.3164  4303.1948      26108      41889
+315
+(81,443 missing values generated)
+(/ observations deleted)
+
++-------------------+
+| Key               |
+|-------------------|
+|     frequency     |
+| column percentage |
++-------------------+
+
+           |         year
+    mw_ind |      2008       2014 |     Total
+-----------+----------------------+----------
+         0 |    32,221     34,185 |    66,406 
+           |     80.83      81.62 |     81.24 
+-----------+----------------------+----------
+         1 |       566        567 |     1,133 
+           |      1.42       1.35 |      1.39 
+-----------+----------------------+----------
+         2 |     1,803      1,777 |     3,580 
+           |      4.52       4.24 |      4.38 
+-----------+----------------------+----------
+         3 |       436        503 |       939 
+           |      1.09       1.20 |      1.15 
+-----------+----------------------+----------
+         4 |       282        246 |       528 
+           |      0.71       0.59 |      0.65 
+-----------+----------------------+----------
+         5 |       150         97 |       247 
+           |      0.38       0.23 |      0.30 
+-----------+----------------------+----------
+         6 |     1,015      1,141 |     2,156 
+           |      2.55       2.72 |      2.64 
+-----------+----------------------+----------
+         7 |        45         48 |        93 
+           |      0.11       0.11 |      0.11 
+-----------+----------------------+----------
+         9 |     1,930      1,845 |     3,775 
+           |      4.84       4.41 |      4.62 
+-----------+----------------------+----------
+        10 |       694        750 |     1,444 
+           |      1.74       1.79 |      1.77 
+-----------+----------------------+----------
+        11 |       343        329 |       672 
+           |      0.86       0.79 |      0.82 
+-----------+----------------------+----------
+        12 |       280        285 |       565 
+           |      0.70       0.68 |      0.69 
+-----------+----------------------+----------
+        13 |        97        110 |       207 
+           |      0.24       0.26 |      0.25 
+-----------+----------------------+----------
+     Total |    39,862     41,883 |    81,745 
+           |    100.00     100.00 |    100.00 
+
+mwind_sizes[13,2]
+        c1     c2
+ r1  32221  34185
+ r2    566    567
+ r3   1803   1777
+ r4    436    503
+ r5    282    246
+ r6    150     97
+ r7   1015   1141
+ r8     45     48
+ r9   1930   1845
+r10    694    750
+r11    343    329
+r12    280    285
+r13     97    110
+
+Iteration 0:   log pseudolikelihood = -55926.206  
+Iteration 1:   log pseudolikelihood = -55358.315  
+Iteration 2:   log pseudolikelihood = -55358.259  
+Iteration 3:   log pseudolikelihood = -55358.259  
+
+Probit regression                                      Number of obs =  80,714
+                                                       Wald chi2(23) = 1127.73
+                                                       Prob > chi2   =  0.0000
+Log pseudolikelihood = -55358.259                      Pseudo R2     =  0.0102
+
+----------------------------------------------------------------------------------
+                 |               Robust
+          period | Coefficient  std. err.      z    P>|z|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+           age_q |
+       28 to 31  |   .3229203   .0798611     4.04   0.000     .1663953    .4794452
+       32 to 36  |   .3890124   .1009732     3.85   0.000     .1911086    .5869162
+       37 to 40  |  -.0918781   .1257708    -0.73   0.465    -.3383843     .154628
+       41 to 44  |  -.2041234   .1223307    -1.67   0.095    -.4438873    .0356404
+       45 to 49  |  -.0680228   .1014346    -0.67   0.502     -.266831    .1307854
+       50 to 54  |   .0095008   .1033752     0.09   0.927    -.1931108    .2121124
+       55 to 62  |   .2497914   .1163681     2.15   0.032     .0217141    .4778687
+                 |
+            educ |
+         Middle  |   .1697939    .047916     3.54   0.000     .0758803    .2637075
+           High  |   .4856492   .0759916     6.39   0.000     .3367085      .63459
+                 |
+      age_q#educ |
+28 to 31#Middle  |  -.1745601   .0825588    -2.11   0.034    -.3363723   -.0127479
+  28 to 31#High  |  -.3669597   .1052274    -3.49   0.000    -.5732016   -.1607178
+32 to 36#Middle  |  -.2878228    .103101    -2.79   0.005     -.489897   -.0857485
+  32 to 36#High  |  -.4104452   .1214491    -3.38   0.001    -.6484811   -.1724093
+37 to 40#Middle  |   -.045923   .1276496    -0.36   0.719    -.2961117    .2042657
+  37 to 40#High  |  -.1488622   .1434815    -1.04   0.300    -.4300808    .1323563
+41 to 44#Middle  |   .1214978   .1240447     0.98   0.327    -.1216253    .3646209
+  41 to 44#High  |  -.1536284   .1401955    -1.10   0.273    -.4284065    .1211498
+45 to 49#Middle  |   .1155191   .1032647     1.12   0.263     -.086876    .3179142
+  45 to 49#High  |  -.1324855   .1211846    -1.09   0.274    -.3700031     .105032
+50 to 54#Middle  |   .1740822   .1052304     1.65   0.098    -.0321655    .3803299
+  50 to 54#High  |  -.2168876   .1227979    -1.77   0.077    -.4575671    .0237919
+55 to 62#Middle  |   .1051455   .1181042     0.89   0.373    -.1263344    .3366254
+  55 to 62#High  |  -.2533818   .1333623    -1.90   0.057    -.5147672    .0080035
+                 |
+           _cons |   -.240643   .0455564    -5.28   0.000    -.3299319   -.1513541
+----------------------------------------------------------------------------------
+(1,031 missing values generated)
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+      period |     81,745    .5123616    .4998502          0          1
+(42,297 missing values generated)
+---------------------------------
+Kerndichteschaetzung fuer Abfallwirtschaft Lohnverteilung in 2008
+Berechnet mit 566 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Abfallwirtschaft Lohnverteilung in 2008
+Berechnet mitmit 566 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Leiharbeit/Zeitarbeit Lohnverteilung in 2008
+Berechnet mit 1803 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Leiharbeit/Zeitarbeit Lohnverteilung in 2008
+Berechnet mitmit 1803 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Sicherheitsdienstleistungen Lohnverteilung in 2008
+Berechnet mit 436 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Sicherheitsdienstleistungen Lohnverteilung in 2008
+Berechnet mitmit 436 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Gebaeudereinigung Lohnverteilung in 2008
+Berechnet mit 282 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Gebaeudereinigung Lohnverteilung in 2008
+Berechnet mitmit 282 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Weiterbildungsdienstleitungen Lohnverteilung in 2008
+Berechnet mit 150 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Weiterbildungsdienstleitungen Lohnverteilung in 2008
+Berechnet mitmit 150 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Pflege Lohnverteilung in 2008
+Berechnet mit 1015 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Pflege Lohnverteilung in 2008
+Berechnet mitmit 1015 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Waescherei Lohnverteilung in 2008
+Berechnet mit 45 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Waescherei Lohnverteilung in 2008
+Berechnet mitmit 45 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Bauhauptgewerbe Lohnverteilung in 2008
+Berechnet mit 1930 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Bauhauptgewerbe Lohnverteilung in 2008
+Berechnet mitmit 1930 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Elektroinstalation Lohnverteilung in 2008
+Berechnet mit 694 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Elektroinstalation Lohnverteilung in 2008
+Berechnet mitmit 694 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Maler Lohnverteilung in 2008
+Berechnet mit 343 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Maler Lohnverteilung in 2008
+Berechnet mitmit 343 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Dachdecker Lohnverteilung in 2008
+Berechnet mit 280 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Dachdecker Lohnverteilung in 2008
+Berechnet mitmit 280 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Geruestbauer Lohnverteilung in 2008
+Berechnet mit 97 Beobachtungen
+---------------------------------
+Gewichtete Kerndichteschaetzung fuer Geruestbauer Lohnverteilung in 2008
+Berechnet mitmit 97 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Abfallwirtschaft Lohnverteilung in 2014
+Berechnet mit 567 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Leiharbeit/Zeitarbeit Lohnverteilung in 2014
+Berechnet mit 1777 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Sicherheitsdienstleistungen Lohnverteilung in 2014
+Berechnet mit 503 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Gebaeudereinigung Lohnverteilung in 2014
+Berechnet mit 246 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Weiterbildungsdienstleitungen Lohnverteilung in 2014
+Berechnet mit 97 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Pflege Lohnverteilung in 2014
+Berechnet mit 1141 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Waescherei Lohnverteilung in 2014
+Berechnet mit 48 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Bauhauptgewerbe Lohnverteilung in 2014
+Berechnet mit 1845 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Elektroinstalation Lohnverteilung in 2014
+Berechnet mit 750 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Maler Lohnverteilung in 2014
+Berechnet mit 329 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Dachdecker Lohnverteilung in 2014
+Berechnet mit 285 Beobachtungen
+---------------------------------
+Kerndichteschaetzung fuer Geruestbauer Lohnverteilung in 2014
+Berechnet mit 110 Beobachtungen
+Kerndichteschaetzung fuer Nicht-Mindestlohnbranchen 2008
+Zur Berechnung wurden 32221 Beobachtungen verwendet
+Kerndichteschaetzung fuer Nicht-Mindestlohnbranchen 2008
+Zur Berechnung wurden 34185 Beobachtungen verwendet
+(81,430 missing values generated)
+(307 real changes made)
+(262 real changes made)
+(210 real changes made)
+(210 real changes made)
+(315 real changes made)
+(315 real changes made)
+(238 real changes made)
+(310 real changes made)
+(258 real changes made)
+(149 real changes made)
+(148 real changes made)
+(202 real changes made)
+(81,430 observations deleted)
+. matrix list actual_2008_e1
+
+actual_2008_e1[4,1]
+           c1
+r1       1350
+r2  1510.5197
+r3  2297.3728
+r4  .41931248
+. matrix list actual_2014_e1
+
+actual_2014_e1[4,1]
+           c1
+r1       1500
+r2  1630.3258
+r3  2435.3164
+r4  .40129681
+. matrix list counterfactual_2014_e1
+
+counterfactual_2014_e1[4,1]
+           c1
+r1       1425
+r2       1575
+r3       2400
+r4  .42121347
+. matrix list m_kdensity_e1
+
+m_kdensity_e1[315,4]
+          Skala     D_2008     D_2014    CF_2014
+  r1          0          0          0  2.612e-07
+  r2         25          0  1.184e-08  4.348e-07
+  r3         50  1.721e-08  1.480e-07  7.911e-07
+  r4         75  3.140e-07  4.586e-07  1.259e-06
+  r5        100  1.558e-06  1.000e-06  1.807e-06
+  r6        125  3.098e-06  1.627e-06  2.467e-06
+  r7        150  4.878e-06  2.383e-06  3.194e-06
+  r8        175  6.853e-06  3.177e-06  3.972e-06
+  r9        200  8.919e-06  3.996e-06  4.748e-06
+ r10        225   .0000112  4.823e-06  5.597e-06
+ r11        250  .00001354  5.669e-06  6.551e-06
+ r12        275  .00001575  6.677e-06  7.534e-06
+ r13        300  .00001785  7.661e-06  8.535e-06
+ r14        325  .00001979  8.606e-06  9.495e-06
+ r15        350  .00002165  9.557e-06  .00001043
+ r16        375  .00002341  .00001045  .00001137
+ r17        400  .00002501  .00001127  .00001234
+ r18        425  .00002641  .00001205  .00001326
+ r19        450  .00002762  .00001281  .00001415
+ r20        475  .00002861  .00001347  .00001506
+ r21        500   .0000294  .00001413  .00001597
+ r22        525  .00002994  .00001477  .00001678
+ r23        550  .00003033  .00001531  .00001759
+ r24        575  .00003039  .00001573   .0000184
+ r25        600  .00003019  .00001609  .00001924
+ r26        625   .0000303  .00001645  .00002015
+ r27        650  .00003137    .000017  .00002109
+ r28        675   .0000328  .00001779  .00002216
+ r29        700  .00003458  .00001874  .00002353
+ r30        725  .00003708   .0000198  .00002544
+ r31        750  .00004055  .00002129  .00002763
+ r32        775  .00004461  .00002294  .00003013
+ r33        800  .00004921  .00002473  .00003312
+ r34        825  .00005433  .00002657  .00003696
+ r35        850  .00006069  .00002891  .00004153
+ r36        875  .00006798  .00003148  .00004724
+ r37        900  .00007573  .00003427   .0000539
+ r38        925  .00008403  .00003749  .00006191
+ r39        950  .00009321  .00004154  .00007091
+ r40        975  .00010317  .00004631  .00008064
+ r41       1000  .00011329  .00005183  .00009078
+ r42       1025  .00012361  .00005785   .0001018
+ r43       1050  .00013467  .00006519  .00011279
+ r44       1075  .00014657  .00007369  .00012378
+ r45       1100  .00015871  .00008318  .00013478
+ r46       1125  .00017096  .00009366  .00014619
+ r47       1150  .00018325  .00010543  .00015759
+ r48       1175  .00019611  .00011866  .00016879
+ r49       1200   .0002092  .00013278  .00018003
+ r50       1225    .000222  .00014769  .00019225
+ r51       1250  .00023457  .00016376  .00020508
+ r52       1275  .00024782  .00018099  .00021807
+ r53       1300  .00026169  .00019851  .00023157
+ r54       1325  .00027507  .00021661  .00024586
+ r55       1350  .00028799   .0002354  .00026003
+ r56       1375  .00030126  .00025447   .0002744
+ r57       1400   .0003155  .00027318  .00028868
+ r58       1425   .0003302  .00029146  .00030282
+ r59       1450  .00034442  .00030905  .00031631
+ r60       1475  .00035831  .00032579  .00032971
+ r61       1500  .00037245  .00034163   .0003421
+ r62       1525  .00038653  .00035652  .00035416
+ r63       1550  .00039947  .00037044  .00036556
+ r64       1575  .00041097  .00038347  .00037706
+ r65       1600  .00042166  .00039549  .00038763
+ r66       1625  .00043195  .00040714  .00039778
+ r67       1650  .00044183  .00041833  .00040703
+ r68       1675   .0004512  .00042872  .00041583
+ r69       1700  .00045976  .00043787  .00042364
+ r70       1725  .00046724  .00044599    .000431
+ r71       1750  .00047367  .00045323   .0004382
+ r72       1775  .00047836  .00045964  .00044534
+ r73       1800  .00048142  .00046466  .00045179
+ r74       1825  .00048357  .00046897  .00046343
+ r75       1850  .00048438  .00047253  .00046761
+ r76       1875  .00048327  .00047471  .00047087
+ r77       1900  .00048011  .00047545   .0004827
+ r78       1925  .00047612  .00047528  .00048483
+ r79       1950  .00047153  .00047434  .00048317
+ r80       1975  .00046609  .00047208  .00048053
+ r81       2000  .00045935  .00046866  .00047588
+ r82       2025  .00045153   .0004644  .00046935
+ r83       2050  .00044319  .00045947  .00046108
+ r84       2075  .00043439  .00045367   .0004517
+ r85       2100   .0004252  .00044674  .00044133
+ r86       2125  .00041518  .00043827  .00043057
+ r87       2150   .0004044  .00042909  .00042095
+ r88       2175  .00039348   .0004196  .00041033
+ r89       2200  .00038335  .00041038  .00040349
+ r90       2225  .00037401  .00040126  .00039392
+ r91       2250  .00036526  .00039228  .00038586
+ r92       2275   .0003572  .00038397  .00037824
+ r93       2300  .00034997  .00037585  .00037081
+ r94       2325  .00034297  .00036777   .0003636
+ r95       2350  .00033635  .00036028  .00035639
+ r96       2375  .00033032  .00035279  .00034952
+ r97       2400  .00032489  .00034601  .00034336
+ r98       2425  .00032014   .0003394  .00033698
+ r99       2450  .00031545  .00033284  .00033122
+r100       2475  .00031136  .00032646  .00032585
+r101       2500  .00030761  .00032055  .00031984
+r102       2525  .00030417  .00031498  .00031384
+r103       2550  .00030078  .00030931  .00030891
+r104       2575  .00029699  .00030375  .00030355
+r105       2600  .00029293  .00029897  .00029819
+r106       2625  .00028866  .00029441  .00029308
+r107       2650  .00028446  .00029025  .00028818
+r108       2675  .00027996  .00028615  .00028362
+r109       2700  .00027459  .00028184  .00027915
+r110       2725  .00026927  .00027714  .00027466
+r111       2750  .00026414  .00027224  .00027039
+r112       2775  .00025912  .00026792   .0002662
+r113       2800  .00025394  .00026393  .00026283
+r114       2825  .00024892  .00025954  .00025879
+r115       2850  .00024419  .00025552   .0002545
+r116       2875  .00023949   .0002518  .00025035
+r117       2900  .00023458  .00024806  .00024645
+r118       2925   .0002294  .00024435  .00024261
+r119       2950  .00022433  .00024045  .00023887
+r120       2975  .00021946  .00023654  .00023489
+r121       3000  .00021469  .00023255  .00023068
+r122       3025  .00021025  .00022816  .00022658
+r123       3050  .00020619  .00022357  .00022253
+r124       3075   .0002024   .0002192  .00021838
+r125       3100  .00019859  .00021511  .00021415
+r126       3125  .00019477  .00021079  .00020987
+r127       3150  .00019097  .00020637  .00020568
+r128       3175  .00018735   .0002022  .00020123
+r129       3200  .00018407  .00019799  .00019694
+r130       3225  .00018081  .00019374   .0001927
+r131       3250  .00017726  .00018946  .00018865
+r132       3275  .00017364  .00018518  .00018475
+r133       3300  .00017003   .0001809  .00018114
+r134       3325  .00016663  .00017638  .00017764
+r135       3350  .00016339  .00017239  .00017403
+r136       3375  .00016044  .00016907  .00017053
+r137       3400  .00015777    .000166  .00016737
+r138       3425  .00015557    .000163   .0001644
+r139       3450  .00015349  .00016025   .0001614
+r140       3475  .00015099  .00015753  .00015849
+r141       3500  .00014835  .00015471  .00015566
+r142       3525  .00014563  .00015217  .00015283
+r143       3550  .00014297  .00014966  .00015004
+r144       3575  .00014027  .00014726  .00014751
+r145       3600  .00013781  .00014487  .00014515
+r146       3625   .0001356  .00014247  .00014302
+r147       3650  .00013323   .0001402  .00014081
+r148       3675  .00013069  .00013818  .00013867
+r149       3700  .00012781  .00013619   .0001366
+r150       3725   .0001249  .00013418  .00013461
+r151       3750  .00012227  .00013216  .00013268
+r152       3775  .00011975  .00013028  .00013079
+r153       3800  .00011723  .00012845  .00012925
+r154       3825  .00011459  .00012682  .00012783
+r155       3850  .00011184  .00012534  .00012626
+r156       3875  .00010923  .00012381  .00012453
+r157       3900  .00010668  .00012203  .00012269
+r158       3925  .00010452  .00012012   .0001208
+r159       3950  .00010259  .00011835   .0001188
+r160       3975   .0001009  .00011668   .0001169
+r161       4000  .00009918  .00011494  .00011507
+r162       4025  .00009733   .0001132  .00011345
+r163       4050  .00009541  .00011149   .0001119
+r164       4075  .00009353  .00010974  .00011033
+r165       4100  .00009175  .00010807  .00010858
+r166       4125  .00008994  .00010625  .00010686
+r167       4150  .00008836  .00010442  .00010514
+r168       4175    .000087  .00010257  .00010323
+r169       4200  .00008568  .00010049  .00010136
+r170       4225  .00008442  .00009841  .00009944
+r171       4250  .00008308  .00009639  .00009755
+r172       4275  .00008172   .0000943  .00009587
+r173       4300  .00008059  .00009244  .00009412
+r174       4325  .00007973  .00009057  .00009243
+r175       4350  .00007884  .00008873  .00009083
+r176       4375  .00007783  .00008705  .00008921
+r177       4400  .00007679  .00008586  .00008756
+r178       4425  .00007593  .00008504  .00008603
+r179       4450  .00007511  .00008415  .00008494
+r180       4475  .00007439  .00008328  .00008411
+r181       4500  .00007372  .00008237  .00008316
+r182       4525  .00007316  .00008138  .00008223
+r183       4550  .00007247  .00008043  .00008118
+r184       4575  .00007179   .0000795  .00008019
+r185       4600  .00007106  .00007852  .00007917
+r186       4625  .00007029  .00007761   .0000781
+r187       4650  .00006946  .00007689  .00007723
+r188       4675  .00006849   .0000763  .00007675
+r189       4700  .00006789  .00007598  .00007664
+r190       4725  .00006755  .00007597  .00007684
+r191       4750  .00007059  .00007632  .00007732
+r192       4775  .00007366   .0000768  .00007881
+r193       4800  .00007622  .00007757  .00008205
+r194       4825  .00007821  .00008143   .0000849
+r195       4850  .00007984  .00008563  .00008731
+r196       4875  .00008111  .00008932  .00008929
+r197       4900  .00008208  .00009233  .00009096
+r198       4925  .00008268  .00009468  .00009227
+r199       4950  .00008271  .00009646  .00009315
+r200       4975  .00008241  .00009772  .00009356
+r201       5000  .00008164  .00009837  .00009375
+r202       5025  .00008039  .00009842  .00009353
+r203       5050  .00007869  .00009795  .00009286
+r204       5075  .00007656    .000097  .00009172
+r205       5100  .00007392  .00009543  .00009027
+r206       5125  .00007085  .00009326  .00008845
+r207       5150  .00006728  .00009058  .00008622
+r208       5175  .00006329  .00008725   .0000837
+r209       5200  .00005887  .00008335  .00008075
+r210       5225  .00005397  .00007896  .00007733
+r211       5250  .00004906  .00007398  .00007355
+r212       5275  .00004415  .00006874  .00006951
+r213       5300  .00004231  .00006343  .00006527
+r214       5325  .00004147  .00005809  .00006089
+r215       5350  .00004065   .0000527  .00005653
+r216       5375  .00003983  .00004749  .00005215
+r217       5400  .00003897  .00004494  .00004795
+r218       5425  .00003803  .00004396  .00004441
+r219       5450  .00003709    .000043  .00004344
+r220       5475  .00003622  .00004207  .00004255
+r221       5500   .0000353  .00004118  .00004167
+r222       5525  .00003437  .00004029  .00004081
+r223       5550  .00003345   .0000394  .00004006
+r224       5575  .00003265  .00003856  .00003935
+r225       5600   .0000319  .00003789   .0000387
+r226       5625  .00003122  .00003739  .00003806
+r227       5650  .00003047  .00003696  .00003763
+r228       5675   .0000297  .00003658  .00003723
+r229       5700  .00002891  .00003633  .00003688
+r230       5725  .00002813  .00003613  .00003651
+r231       5750  .00002728  .00003588  .00003616
+r232       5775   .0000264  .00003558  .00003577
+r233       5800  .00002575  .00003531  .00003528
+r234       5825  .00002518   .0000349  .00003481
+r235       5850  .00002464   .0000344  .00003428
+r236       5875  .00002418  .00003393  .00003366
+r237       5900  .00002377  .00003347  .00003307
+r238       5925  .00002347  .00003297  .00003248
+r239       5950  .00002322  .00003238  .00003185
+r240       5975  .00002305  .00003166  .00003113
+r241       6000  .00002282  .00003078  .00003034
+r242       6025  .00002254  .00002981  .00002948
+r243       6050  .00002214  .00002875  .00002852
+r244       6075  .00002167   .0000277  .00002754
+r245       6100  .00002125  .00002649  .00002667
+r246       6125  .00002099  .00002537  .00002581
+r247       6150   .0000207   .0000244  .00002495
+r248       6175  .00002052   .0000235  .00002409
+r249       6200  .00002037  .00002273  .00002332
+r250       6225  .00002021    .000022  .00002262
+r251       6250  .00001998  .00002135  .00002197
+r252       6275  .00001963  .00002086  .00002129
+r253       6300  .00001921  .00002042  .00002069
+r254       6325  .00001879  .00002001  .00002023
+r255       6350  .00001846  .00001958  .00001987
+r256       6375  .00001806  .00001933  .00001954
+r257       6400  .00001756  .00001912  .00001919
+r258       6425  .00001712  .00001885   .0000189
+r259       6450  .00001666  .00001861  .00001866
+r260       6475  .00001617  .00001836  .00001847
+r261       6500  .00001578  .00001826  .00001823
+r262       6525   .0000155  .00001816  .00001798
+r263       6550  .00001524  .00001801  .00001775
+r264       6575    .000015  .00001782  .00001755
+r265       6600   .0000147  .00001763  .00001732
+r266       6625   .0000143  .00001729  .00001707
+r267       6650  .00001387  .00001692   .0000168
+r268       6675  .00001352  .00001646  .00001648
+r269       6700   .0000132  .00001605  .00001612
+r270       6725  .00001295  .00001573   .0000157
+r271       6750  .00001276  .00001542  .00001538
+r272       6775  .00001261  .00001511  .00001512
+r273       6800  .00001247  .00001484  .00001488
+r274       6825  .00001229  .00001462  .00001466
+r275       6850  .00001209  .00001441  .00001446
+r276       6875  .00001195  .00001418  .00001432
+r277       6900  .00001177  .00001392  .00001422
+r278       6925  .00001156  .00001366  .00001411
+r279       6950  .00001124  .00001353  .00001392
+r280       6975  .00001089  .00001344  .00001377
+r281       7000  .00001056  .00001336   .0000136
+r282       7025  .00001021  .00001324  .00001341
+r283       7050  9.905e-06  .00001305  .00001321
+r284       7075  9.638e-06  .00001295  .00001298
+r285       7100  9.365e-06  .00001285  .00001278
+r286       7125  9.087e-06   .0000127  .00001262
+r287       7150  8.795e-06  .00001255  .00001243
+r288       7175  8.477e-06  .00001236  .00001226
+r289       7200  8.191e-06  .00001212  .00001209
+r290       7225  7.921e-06  .00001189  .00001191
+r291       7250  7.709e-06  .00001167  .00001167
+r292       7275  7.533e-06  .00001143  .00001146
+r293       7300  7.435e-06  .00001115  .00001125
+r294       7325  7.382e-06  .00001095  .00001105
+r295       7350  7.388e-06  .00001072  .00001088
+r296       7375  7.397e-06  .00001049  .00001067
+r297       7400  7.408e-06   .0000103  .00001041
+r298       7425  7.464e-06  .00001004  .00001017
+r299       7450  7.466e-06  9.795e-06  9.947e-06
+r300       7475  7.509e-06  9.563e-06  9.722e-06
+r301       7500  7.535e-06  9.373e-06  9.520e-06
+r302       7525  7.513e-06  9.227e-06  9.316e-06
+r303       7550  7.479e-06  9.077e-06  9.101e-06
+r304       7575  7.463e-06  8.915e-06  8.925e-06
+r305       7600  7.405e-06  8.749e-06  8.723e-06
+r306       7625  7.343e-06  8.532e-06  8.544e-06
+r307       7650  7.188e-06  8.300e-06  8.355e-06
+r308       7675  6.973e-06  8.083e-06  8.139e-06
+r309       7700  6.753e-06  7.856e-06  7.963e-06
+r310       7725  6.560e-06  7.658e-06  7.797e-06
+r311       7750  6.432e-06  7.483e-06  7.629e-06
+r312       7775  6.286e-06  7.328e-06  7.483e-06
+r313       7800  6.147e-06  7.202e-06  7.351e-06
+r314       7825  6.016e-06  7.114e-06  7.223e-06
+r315       7850  5.914e-06  7.048e-06  7.118e-06
+Spalte 1 ist eine Lohnskala fuer die Kerndichteschaetzung
+Verwendete Beobachtungen für Spalte2:39862
+Verwendete Beobachtungen für Spalte3:41883
+Fuer die Simulation in Spalte 4 wurden 81745 Beobachtungen verwendet
+-----------------------------------
+
+. 
+. cap log close

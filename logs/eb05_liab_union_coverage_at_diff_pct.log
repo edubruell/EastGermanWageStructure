@@ -1,0 +1,251 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Josua\Output\214350\\eb05_liab_union_coverage_at_diff_pct.log
+  log type:  text
+ opened on:  27 Jun 2023, 11:22:03
+
+. 
+. 
+. //==============================================================================
+. //1. Union coverage at different percentile categories
+. //==============================================================================
+. 
+. /*
+> Dieses Do-File gibt Summary Statistics von Tarifvertragsdummies fuer 4 Perzentilkategorien aus 
+> */
+. 
+. 
+. //Load the LIAB data
+. use "${data}/liab_panel.dta", clear
+(FDZ1490 LIAB Panel -  6 Oct 2022 - 12:20:42)
+
+.  
+. //generate help variables for counter
+. bys east year persnr: gen N_Pers =(_n==1)
+
+. bys east year idnum:  gen N_Betr =(_n==1)
+
+. 
+. 
+. //Generate wage percentiles
+. sort east year
+
+. foreach p in "15" "50" "85"{
+  2.         by east year: egen mwage_p`p' = pctile(mwage), p(`p')
+  3. }
+
+. 
+. gen pct_class = .
+(20,331,955 missing values generated)
+
+. replace pct_class = 1 if mwage <= mwage_p15
+(3,050,045 real changes made)
+
+. replace pct_class = 2 if mwage > mwage_p15 & mwage <= mwage_p50
+(7,116,138 real changes made)
+
+. replace pct_class = 3 if mwage > mwage_p50 & mwage <= mwage_p85
+(7,224,640 real changes made)
+
+. replace pct_class = 4 if mwage > mwage_p85
+(2,941,132 real changes made)
+
+. #delimit ;
+delimiter now ;
+. label define pct_class_lab 1 "Sub_15"
+>                                                    2 "15_to_50"
+>                                                    3 "50_to_85"
+>                                                    4 "over85";
+
+. #delimit cr
+delimiter now cr
+. label values pct_class pct_class_lab
+
+. 
+. //keep only the needed years
+. keep if year==1997 | year==2004 | year==2010
+(17,117,752 observations deleted)
+
+. 
+. //Generate Tarifudmmies
+. gen t_branche = tarif==1
+
+. gen t_haus  = tarif==2
+
+. 
+. //Drop if east is missing
+. drop if east==.
+(/ observations deleted)
+
+. 
+. 
+. /*Hier werden jeweils der Mittelwert, die Standardabweichung, das Minimum und Maximum 
+> und die verwendete Anzahl fuer Personen fuer die Variablen t_branche (Dummy fuer Branchentarifvertraege)
+> und t_haus (Dummy fuer Haustarifvertraege) ausgegeben. In einer Schleife werden einmal Werte ohne 
+> Gewichtung und einmal mit Querschnittshochrechnung ausgegeben.
+> 
+> Es wird immer die Variable und die Art der Ausgabe angegeben. Die Werte werden nach West für die Jahre 1996 und 2005 
+> und nach 4 Lohn-Perzentilklassen (unter 15, 15 bis 50, 50 bis 85, ueber 85) aufgeteilt ausgegeben. */
+. 
+. //Ausgabe-Schleife
+. label define w_lab 1 "" 2 "[iweight=hrf_quer]" 
+
+. label define w_readable 1 "ohne Gewichtung" 2 "mit Querschnttshochrechnung" 
+
+. label define wmat 1 "raw" 2 "whrf" 
+
+. foreach var in "branche" "haus"{
+  2.         display "=================================================="
+  3.         display "Variable: `var'"
+  4.         forvalues w = 1/2{
+  5.                 
+.                 local weight: label w_lab `w'
+  6.                 local title: label w_readable `w'
+  7.                 local mw: label wmat `w'
+  8.                 display "--------------------------------------------"
+  9.                 display "`w'. Ausgabe  `title'"
+ 10.                 preserve 
+ 11.                 #delimit ;
+delimiter now ;
+.                         collapse (mean) m_`var'=t_`var' 
+>                                         (sd) sd_`var'=t_`var' 
+>                                         (min) min_`var'=t_`var'  
+>                                         (max) max_`var'=t_`var'                                  
+>                                         (sum) N_Pers 
+>                                         (sum) N_Betr `weight', by(east year pct_class);
+ 12.                 #delimit cr
+delimiter now cr
+.                 mkmat east year pct_class m_`var' sd_`var' min_`var' max_`var' N_Pers N_Betr, mat(m_`var'_`mw')
+ 13.                 display ". matrix list m_`var'_`mw'"
+ 14.                 matrix list m_`var'_`mw'
+ 15.                 restore
+ 16.         }
+ 17. }
+==================================================
+Variable: branche
+--------------------------------------------
+1. Ausgabe  ohne Gewichtung
+. matrix list m_branche_raw
+
+m_branche_raw[24,9]
+            east         year    pct_class    m_branche   sd_branche  min_branche  max_branche       N_Pers       N_Betr
+ r1            0         1997            1    .85661082    .35047065            0            1       129563         1183
+ r2            0         1997            2    .86303611     .3438098            0            1       302382          905
+ r3            0         1997            3    .86212298    .34477143            0            1       302191          692
+ r4            0         1997            4    .86935165    .33701666            0            1       129621          250
+ r5            0         2004            1    .70223797    .45727585            0            1       149048         3312
+ r6            0         2004            2    .80584476    .39554953            0            1       348158         2236
+ r7            0         2004            3    .79788476    .40157828            0            1       357989         1564
+ r8            0         2004            4    .78206524    .41284432            0            1       138427          541
+ r9            0         2010            1    .56794242    .49536482            0            1        98660         3256
+r10            0         2010            2    .73380961    .44196596            0            1       230577         1933
+r11            0         2010            3    .73299743    .44239466            0            1       234173         1205
+r12            0         2010            4    .71292945    .45239717            0            1        95295          386
+r13            1         1997            1    .51326911    .49982917            0            1        47390         1383
+r14            1         1997            2    .78131213    .41335824            0            1       110493         1490
+r15            1         1997            3    .83927281    .36728079            0            1       110383          836
+r16            1         1997            4    .81628608     .3872548            0            1        47305          354
+r17            1         2004            1    .28800535    .45284047            0            1        32901         1651
+r18            1         2004            2    .49626331    .49998929            0            1        76777         1728
+r19            1         2004            3    .70643528    .45539782            0            1        76775          927
+r20            1         2004            4    .68409381    .46488282            0            1        32848          431
+r21            1         2010            1     .2639371    .44077481            0            1        23886         1405
+r22            1         2010            2    .33299875    .47129032            0            1        55723         1700
+r23            1         2010            3    .61764442     .4859671            0            1        55734          757
+r24            1         2010            4    .58803848     .4921985            0            1        23888          376
+--------------------------------------------
+2. Ausgabe  mit Querschnttshochrechnung
+. matrix list m_branche_whrf
+
+m_branche_whrf[24,9]
+            east         year    pct_class    m_branche   sd_branche  min_branche  max_branche       N_Pers       N_Betr
+ r1            0         1997            1    .69310857    .46120401            0            1    3668010.1    528968.65
+ r2            0         1997            2    .78985797    .40740938            0            1    3354722.7    199464.91
+ r3            0         1997            3    .75546755    .42980973            0            1      2558801    110236.83
+ r4            0         1997            4    .71163264    .45300313            0            1    990712.33     38101.73
+ r5            0         2004            1     .5888984    .49203368            0            1    3415219.2    549458.28
+ r6            0         2004            2    .71201422    .45282451            0            1    3075663.7    199761.43
+ r7            0         2004            3    .68410524    .46487133            0            1    2317813.8    115952.06
+ r8            0         2004            4    .65509042    .47533904            0            1    927000.17     34678.66
+ r9            0         2010            1    .49021972    .49990441            0            1    3563410.6    521596.66
+r10            0         2010            2    .62518166    .48407605            0            1    3102987.9    177043.88
+r11            0         2010            3    .61297982    .48706844            0            1      2176805    104017.19
+r12            0         2010            4    .59321097    .49123517            0            1    858176.25     29021.82
+r13            1         1997            1    .36301766    .48087018            0            1     790713.6    131412.75
+r14            1         1997            2    .58168345    .49328294            0            1    980710.63     81786.51
+r15            1         1997            3    .63725244    .48079322            0            1    660592.11     36671.07
+r16            1         1997            4    .54149851    .49827566            0            1     327401.5     14180.02
+r17            1         2004            1    .27255489    .44527412            0            1    626889.88    125771.75
+r18            1         2004            2    .41680753    .49303075            0            1    784860.38     76741.04
+r19            1         2004            3    .55900071    .49650727            0            1    445183.88     30155.58
+r20            1         2004            4    .56823077    .49532381            0            1    219915.53     12391.72
+r21            1         2010            1    .23055886    .42119095            0            1    512560.01     95955.66
+r22            1         2010            2    .32608925    .46878068            0            1    798086.11     84401.84
+r23            1         2010            3    .51217345    .49985236            0            1    434216.44     26118.67
+r24            1         2010            4    .52299438     .4994723            0            1    189043.07     11121.02
+==================================================
+Variable: haus
+--------------------------------------------
+1. Ausgabe  ohne Gewichtung
+. matrix list m_haus_raw
+
+m_haus_raw[24,9]
+          east       year  pct_class     m_haus    sd_haus   min_haus   max_haus     N_Pers     N_Betr
+ r1          0       1997          1  .08672285  .28142958          0          1     129563       1183
+ r2          0       1997          2  .11091283  .31402468          0          1     302382        905
+ r3          0       1997          3   .1079368  .31030109          0          1     302191        692
+ r4          0       1997          4  .07859875  .26911251          0          1     129621        250
+ r5          0       2004          1  .10152257  .30202045          0          1     149048       3312
+ r6          0       2004          2  .12107856  .32621902          0          1     348158       2236
+ r7          0       2004          3  .14467219  .35177051          0          1     357989       1564
+ r8          0       2004          4  .14956929  .35665002          0          1     138427        541
+ r9          0       2010          1  .13827056  .34518548          0          1      98660       3256
+r10          0       2010          2  .15936937  .36602097          0          1     230577       1933
+r11          0       2010          3  .18725548  .39011731          0          1     234173       1205
+r12          0       2010          4  .19344348  .39499967          0          1      95295        386
+r13          1       1997          1  .27807171  .44805364          0          1      47390       1383
+r14          1       1997          2  .14079161  .34780803          0          1     110493       1490
+r15          1       1997          3  .11959665  .32449074          0          1     110383        836
+r16          1       1997          4  .14968267  .35676386          0          1      47305        354
+r17          1       2004          1  .15451204  .36144438          0          1      32901       1651
+r18          1       2004          2   .2156342  .41126426          0          1      76777       1728
+r19          1       2004          3  .16338806  .36972176          0          1      76775        927
+r20          1       2004          4  .17412966   .3792267          0          1      32848        431
+r21          1       2010          1  .10409435  .30538929          0          1      23886       1405
+r22          1       2010          2  .16786162  .37374671          0          1      55723       1700
+r23          1       2010          3  .17990357  .38411056          0          1      55734        757
+r24          1       2010          4   .2419908  .42829771          0          1      23888        376
+--------------------------------------------
+2. Ausgabe  mit Querschnttshochrechnung
+. matrix list m_haus_whrf
+
+m_haus_whrf[24,9]
+          east       year  pct_class     m_haus    sd_haus   min_haus   max_haus     N_Pers     N_Betr
+ r1          0       1997          1  .11774109  .32230134          0          1  3668010.1  528968.65
+ r2          0       1997          2  .11753901  .32206152          0          1  3354722.7  199464.91
+ r3          0       1997          3  .13302646  .33960339          0          1    2558801  110236.83
+ r4          0       1997          4  .12014289  .32512871          0          1  990712.33   38101.73
+ r5          0       2004          1  .05117683   .2203583          0          1  3415219.2  549458.28
+ r6          0       2004          2   .0743648  .26236367          0          1  3075663.7  199761.43
+ r7          0       2004          3    .085999  .28036263          0          1  2317813.8  115952.06
+ r8          0       2004          4  .09279583  .29014626          0          1  927000.17   34678.66
+ r9          0       2010          1  .06678371  .24964707          0          1  3563410.6  521596.66
+r10          0       2010          2  .10012117  .30016153          0          1  3102987.9  177043.88
+r11          0       2010          3  .11659572  .32093801          0          1    2176805  104017.19
+r12          0       2010          4  .11654469  .32087715          0          1  858176.25   29021.82
+r13          1       1997          1  .18217219  .38598662          0          1   790713.6  131412.75
+r14          1       1997          2  .17818814  .38267124          0          1  980710.63   81786.51
+r15          1       1997          3  .23725388  .42539952          0          1  660592.11   36671.07
+r16          1       1997          4  .34114442   .4740945          0          1   327401.5   14180.02
+r17          1       2004          1    .072575   .2594378          0          1  626889.88  125771.75
+r18          1       2004          2  .14027497  .34727231          0          1  784860.38   76741.04
+r19          1       2004          3  .14353331  .35061627          0          1  445183.88   30155.58
+r20          1       2004          4  .13885496   .3457959          0          1  219915.53   12391.72
+r21          1       2010          1  .05284361   .2237214          0          1  512560.01   95955.66
+r22          1       2010          2  .10964646  .31244877          0          1  798086.11   84401.84
+r23          1       2010          3  .15668727  .36350608          0          1  434216.44   26118.67
+r24          1       2010          4  .18922967  .39169199          0          1  189043.07   11121.02
+
+. 
+. 
+. cap log close

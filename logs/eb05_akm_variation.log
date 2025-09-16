@@ -1,0 +1,539 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Josua\Output\214055\\eb05_akm_variation.log
+  log type:  text
+ opened on:  23 Jun 2023, 09:21:52
+
+. 
+. //====================================================================================
+. //      0. Custom Programms
+. //====================================================================================
+. 
+. //Needed software
+. fdzinstall rif
+checking rif consistency and verifying not already installed...
+all files already exist and are up to date.
+
+. fdzinstall gtools
+checking gtools consistency and verifying not already installed...
+all files already exist and are up to date.
+
+. 
+. //Small helper program for conditional display of strings
+. cap program drop displaycond
+
+. program displaycond 
+  1.         syntax anything, b(integer)
+  2.         if `b'==1{
+  3.                 display "`1'"
+  4.         }
+  5. end     
+
+. 
+. //Calculate variation share explained by `wrvar' (typically firm-fixed-effects) within a group defined by `var'
+. cap program drop r_variation
+
+. program r_variation 
+  1.         version 13
+  2.     syntax namelist [,v r_pfx(string)]
+  3.         //Set program inputs
+.         local b_verbose = 0
+  4.         if "`v'" == "v"{
+  5.                 local b_verbose = 1
+  6.         }
+  7. 
+.         if "`r_pfx'" == ""{
+  8.          local r_pfx = "rvar"
+  9.         }
+ 10.         
+.         //Run the program loop
+.         foreach var in `namelist'{      
+ 11.                 quietly levelsof year, local(ys)
+ 12.                 foreach y of local ys{
+ 13.                         forvalues e = 0/1{
+ 14.                                 tempvar pred_var rsdvar
+ 15.                                 //predict variation only due to firm and person FE
+.                                 quietly: reg lwage_imp contemp_ffe contemp_pfe if east == `e' & year==`y'
+ 16.                                 quietly: predict `pred_var'
+ 17.                                 quietly: sum `pred_var'
+ 18.                                 scalar sd_fe = r(sd)
+ 19.                                 //Regress compemporary ffe on `var'
+.                                 quietly: reg contemp_ffe i.`var' if east == `e' & year==`y'
+ 20.                                 scalar r2_ffe = e(r2_a)
+ 21.                                 //Regress compemporary pfe on `var'
+.                                 quietly: reg contemp_pfe i.`var' if east == `e' & year==`y'
+ 22.                                 scalar r2_pfe = e(r2_a)
+ 23.                                 //Regress compemporary pfe on `var'
+.                                 quietly: reg `pred_var'  i.`var' if east == `e' & year==`y'
+ 24.                                 scalar r2_pred = e(r2_a)
+ 25.                                 scalar n_pers = e(N) 
+ 26.                                 quietly: predict `rsdvar', r
+ 27.                                 quietly: sum `rsdvar'
+ 28.                                 scalar rsd_fe = r(sd)
+ 29. 
+.                                 quietly: count if n_betr == 1 & east == `e' & year==`y' 
+ 30.                                 scalar n_btr = r(N)
+ 31.                                 
+.                                 
+.                                 matrix `r_pfx'_`var'   = nullmat(`r_pfx'_`var')\(`e',`y',r2_ffe,r2_pfe,r2_pred,sd_fe,rsd_fe,n_pers,n_btr)
+ 32. 
+.                         }
+ 33.                 }
+ 34.                         
+.                 matrix colnames `r_pfx'_`var' = east year r2_ffe r2_pfe r2_pred sd_fe rsd_fe n_pers n_btr
+ 35.                 display "Variation calculation for `var' saved to matrix `r_pfx'_`var'"
+ 36.         }
+ 37. end
+
+. 
+. 
+. /*=============================================================
+>         BHP. Prepare BHP data
+> ===============================================================*/
+. 
+. use "${orig}/siab_7517_v1_bhp_v1_1995.dta", clear
+(SIAB 7517 (v1), 26 Jun 2019, administrative Betriebsdaten)
+
+. forvalues y=1996/2017{
+  2.         append using  "${orig}/siab_7517_v1_bhp_v1_`y'.dta"
+  3. }
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(variable az_ab65_vz was byte, now int to accommodate using data's values)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(variable az_niv1 was byte, now int to accommodate using data's values)
+(variable az_niv2 was byte, now int to accommodate using data's values)
+(variable az_niv3 was byte, now int to accommodate using data's values)
+(variable az_niv4 was byte, now int to accommodate using data's values)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(variable az_niv2 was int, now long to accommodate using data's values)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+
+. 
+. //Merge new data from the BHP-Basis here.
+. merge m:1 betnr jahr using "${orig}/siab_7517_v1_bhp_basis_v1.dta"
+(label miss_de already defined)
+(label miss_en already defined)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                     4,658,523
+        from master                         0  (_merge==1)
+        from using                  4,658,523  (_merge==2)
+
+    Matched                         9,281,933  (_merge==3)
+    -----------------------------------------
+
+. drop if _merge==2
+(4,658,523 observations deleted)
+
+. drop _merge
+
+. 
+. // Number of men working full-time
+. generate az_m_vz = az_vz - az_f_vz
+
+. // Mean imputed gross average daily wage for men (working full-time)
+. generate te_imp_mw_m = ((az_vz*te_imp_mw)-(az_f_vz*te_imp_mw_f)) / (az_vz-az_f_vz) if az_vz != az_f_vz & az_f_vz > 0
+(3,718,444 missing values generated)
+
+. //Exception: establishments with entire workforce composed of men working full-time:
+. replace te_imp_mw_m = te_imp_mw if az_f_vz == 0
+(2,460,100 real changes made, 1,046,662 to missing)
+
+. 
+. save "${data}/bhp_combined.dta", replace
+file \\a0018022.dst.baintern.de\Projekte\usr\fdz1489\data\/bhp_combined.dta saved
+
+. 
+. /*=============================================================
+>         1. Compute base variables (Groups/RIFs)
+> ===============================================================*/
+. 
+. //load SIAB data
+. use "${data}/siab_panel.dta", clear
+(FDZ1489 SIAB Panel - 20 Sep 2022 - 18:37:53)
+
+. drop if female==1
+(2,933,099 observations deleted)
+
+. drop if east   == .
+(/ observations deleted)
+
+. 
+. set matsize 10000
+
+. 
+. //merge AKM
+. merge m:1 persnr using "${orig}/SIAB_7517_v1_akm_pers.dta"
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                       679,048
+        from master                    20,021  (_merge==1)
+        from using                    659,027  (_merge==2)
+
+    Matched                         5,655,805  (_merge==3)
+    -----------------------------------------
+
+. drop if _merge ==2
+(659,027 observations deleted)
+
+. drop _merge
+
+. 
+. merge m:1 betnr using "${orig}/SIAB_7517_v1_akm_estab.dta"
+(label miss_en already defined)
+(label miss_de already defined)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                     1,405,171
+        from master                    17,601  (_merge==1)
+        from using                  1,387,570  (_merge==2)
+
+    Matched                         5,658,225  (_merge==3)
+    -----------------------------------------
+
+. drop if _merge==2
+(1,387,570 observations deleted)
+
+. drop _merge
+
+. 
+. //Merge new data from the BHP-Basis here.
+. merge m:1 betnr jahr using "${data}/bhp_combined.dta"
+(label miss_de already defined)
+(label miss_en already defined)
+(label ao_kreis_de already defined)
+(label ao_kreis_en already defined)
+(label group_w08_3_de already defined)
+(label group_w08_3_en already defined)
+(label group_w73_3_de already defined)
+(label group_w73_3_en already defined)
+(label group_w93_3_de already defined)
+(label group_w93_3_en already defined)
+(label w03_5_de already defined)
+(label w03_5_en already defined)
+(label w08_3_gen_de already defined)
+(label w08_3_gen_en already defined)
+(label w08_5_de already defined)
+(label w08_5_en already defined)
+(label w73_3_de already defined)
+(label w73_3_en already defined)
+(label w73_3_gen_de already defined)
+(label w73_3_gen_en already defined)
+(label w93_3_gen_de already defined)
+(label w93_3_gen_en already defined)
+(label w93_5_de already defined)
+(label w93_5_en already defined)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                     6,213,508
+        from master                         0  (_merge==1)
+        from using                  6,213,508  (_merge==2)
+
+    Matched                         5,675,826  (_merge==3)
+    -----------------------------------------
+
+. drop if _merge==2
+(6,213,508 observations deleted)
+
+. drop _merge
+
+. 
+. 
+. //Contemporaneous Fixed-Effects
+. gen contemp_ffe = .
+(5,675,826 missing values generated)
+
+. replace contemp_ffe = feff_1998_2004 if year <2003
+(1,977,814 real changes made)
+
+. replace contemp_ffe = feff_2003_2010 if year >=2003 & year <2010
+(1,616,252 real changes made)
+
+. replace contemp_ffe = feff_2010_2017 if year >=2010 & year <=2017
+(1,947,266 real changes made)
+
+.         
+. gen contemp_pfe = .
+(5,675,826 missing values generated)
+
+. replace contemp_pfe = peff_1998_2004 if year <2003
+(1,917,905 real changes made)
+
+. replace contemp_pfe = peff_2003_2010 if year >=2003 & year <2010
+(1,594,648 real changes made)
+
+. replace contemp_pfe = peff_2010_2017 if year >=2010 & year <=2017       
+(1,921,518 real changes made)
+
+. 
+. 
+. //Quartiles of contemporaneous FE 
+. gquantiles q_firm  = contemp_ffe, xtile nq(4) by(east year)
+
+. gquantiles q_pers  = contemp_pfe, xtile nq(4) by(east year)
+
+. 
+. tab q_firm east,m
+
+           |         east
+    q_firm |      west       east |     Total
+-----------+----------------------+----------
+         1 | 1,147,418    237,956 | 1,385,374 
+         2 | 1,147,429    237,957 | 1,385,386 
+         3 | 1,147,424    237,948 | 1,385,372 
+         4 | 1,147,294    237,906 | 1,385,200 
+         . |   102,140     32,354 |   134,494 
+-----------+----------------------+----------
+     Total | 4,691,705    984,121 | 5,675,826 
+
+. tab q_pers east,m
+
+           |         east
+    q_pers |      west       east |     Total
+-----------+----------------------+----------
+         1 | 1,123,991    234,564 | 1,358,555 
+         2 | 1,123,961    234,548 | 1,358,509 
+         3 | 1,123,964    234,547 | 1,358,511 
+         4 | 1,123,955    234,541 | 1,358,496 
+         . |   195,834     45,921 |   241,755 
+-----------+----------------------+----------
+     Total | 4,691,705    984,121 | 5,675,826 
+
+. 
+. 
+. //Use w93_3_gen to create 2-digit industries
+. gen ind2d = floor(w93_3_gen/10)
+(113 missing values generated)
+
+. rename beruf occ3
+
+. 
+. //Bet and Persnr indicators for the counters
+. gsort betnr 
+
+. by betnr: gen n_betr = _n==_N
+
+. gsort persnr 
+
+. by persnr: gen n_persnr = _n==_N
+
+. 
+. //Compute R-Var
+. r_variation ind2d w93_3_gen occ3 
+Variation calculation for ind2d saved to matrix rvar_ind2d
+Variation calculation for w93_3_gen saved to matrix rvar_w93_3_gen
+Variation calculation for occ3 saved to matrix rvar_occ3
+
+. 
+. 
+. /*
+> Wie man die Tabellen unten liest:
+> east     =   Ost/West (0/1) 
+> year     =   Jahr
+> r2_ffe   =   Adj. R^2 einer Regression auf Dummies der Hauptvariable (2-Steller Industrie, 3-Steller Industrie oder 3-Steller Beruf) auf Firmen-AKM effekte
+> r2_pfe   =   Adj. R^2 einer Regression auf Dummies der Hauptvariable auf Personen-AKM effekte
+> r2_pred  =   Adj. R^2 einer Regression auf Dummies der Hauptvariable auf Gesamt-AKM-Lohn-Komponente
+> sd_fe    =   Standardfhler der Gesamt-AKM-Lohn-Komponente
+> rsd_fe   =   Standardfhler der residualisierten Gesamt-AKM-Lohn-Komponente nach Regression auf die Dummies
+> n_pers   =   Verwendete Anzahl an Personen-Beobachtungen
+> n_btr    =   Verwendete Anzahl an Betriebs-Beobachtungen
+> */
+. matrix list rvar_ind2d
+
+rvar_ind2d[46,9]
+          east       year     r2_ffe     r2_pfe    r2_pred      sd_fe     rsd_fe     n_pers      n_btr
+ r1          0       1995  .27905404  .12904366  .18124984  .35497899  .31956495     169911      14487
+ r2          1       1995  .18376593  .15840782  .19790228  .33759687  .30689461      39417       6767
+ r3          0       1996  .28448496  .12414728  .18806468  .36858862  .33117019     178048      13948
+ r4          1       1996  .18794223  .15107732  .19817254   .3598061  .32590424      41444       6371
+ r5          0       1997  .28917151   .1232263  .19251987  .39164719  .35133028     187775      14130
+ r6          1       1997  .18558999  .15351779  .19982756  .38360246  .34718333      44157       6197
+ r7          0       1998  .29413584  .11902968    .190895  .42271481  .37832838     198017      14292
+ r8          1       1998  .18858726   .1536971  .20056425  .41643728   .3777738      45582       5912
+ r9          0       1999  .28578151  .11712284  .19048034   .4347262  .38878512     198889      15180
+r10          1       1999  .19250387  .15200182  .20029264  .43069288  .38967106      45229       6075
+r11          0       2000  .29765691  .11535997  .19473828  .44097126  .39407831     204455      16300
+r12          1       2000  .19320271  .14849686   .2035437  .43814175  .39704147      44149       6158
+r13          0       2001  .29729623  .11021829  .19367487   .4450715  .39789548     203113      16401
+r14          1       2001  .18995901  .14113837  .19952118  .44496189  .40388877      41778       5463
+r15          0       2002  .29569584  .10708806  .19413161  .45305088  .40508147     200460      15682
+r16          1       2002  .19743829  .13790748  .20090638  .45390116  .41163791      39908       4782
+r17          0       2003  .27997881  .12192792  .21337604  .42234766  .37600183     188761      13964
+r18          1       2003  .20394751   .1556805   .2197342  .43300425  .39232769      37271       4315
+r19          0       2004  .28082194  .12129507  .21502512  .43662147  .38851092     187518      13362
+r20          1       2004  .20776399  .14417928  .21290657  .44564045  .40406052      37003       4166
+r21          0       2005   .2822411  .12261673   .2177718  .44815167  .39877257     186211      11894
+r22          1       2005  .21530576  .15708049  .22901958  .45654163  .41433958      35879       3458
+r23          0       2006  .28231703  .12102035  .21926595   .4552566  .40489742     188954      12336
+r24          1       2006   .2119624  .14962135   .2187121  .46341577   .4207138      36762       3342
+r25          0       2007  .28661856  .11779612  .21977906  .45824215  .40807179     192060      12601
+r26          1       2007  .21361872  .13902789  .21377198  .46624115  .42416045      37976       3384
+r27          0       2008  .28068026   .1135424  .21586478  .45997492  .40943759     197069      13305
+r28          1       2008   .2120928  .13240756  .20824749  .46599399  .42419208      39058       3500
+r29          0       2009  .27043087  .11235801   .2122377  .45886588  .40868482     191493      12642
+r30          1       2009  .20893703  .12389046  .20057511  .47277575   .4289907      38277       3377
+r31          0       2010  .26218277  .14394165  .23150183  .43965435   .3903839     185544      13373
+r32          1       2010  .21710416  .14870651  .22531249  .43865773  .39873211      37529       3737
+r33          0       2011  .26408043  .14409039  .23007008  .44147477   .3920237     192787      13234
+r34          1       2011  .22209271  .15728246  .23202036  .43612579  .39764333      38792       3540
+r35          0       2012   .2624255  .14275296  .22731281  .44098192  .39164984     197468      12896
+r36          1       2012  .21900988  .16161668  .23310579  .43363558  .39550228      39475       3333
+r37          0       2013  .25827367  .14206952  .22509008  .44085205  .39171594     198462      13149
+r38          1       2013   .2132748  .16114936  .23128697  .43128665  .39294129      39869       3486
+r39          0       2014  .25861903  .14177194  .22553247  .44292522  .39349658     202291      13762
+r40          1       2014  .21365607  .15817761   .2301771  .42991923  .39183922      40782       3631
+r41          0       2015  .25539405  .14276667   .2264631  .43965101   .3907605     205055      14548
+r42          1       2015  .21347149  .15681547  .22873825  .41403994  .37787732      41357       3597
+r43          0       2016  .25327962  .14369568  .22885782  .43606628  .38764296     208817      18576
+r44          1       2016  .21845872  .15561464  .23061702  .41147171  .37483081      42058       4548
+r45          0       2017  .24643579  .14428565  .22854788  .43098696  .38320729     208838     111516
+r46          1       2017  .20998706  .14890688  .22375616  .40499605  .36881304      41955      26352
+
+. matrix list rvar_occ3
+
+rvar_occ3[46,9]
+          east       year     r2_ffe     r2_pfe    r2_pred      sd_fe     rsd_fe     n_pers      n_btr
+ r1          0       1995  .18366927  .46096273  .43034075  .35497899  .27496979     169914      14487
+ r2          1       1995  .17008211  .45175651  .40174232  .33759687  .26665029      39422       6767
+ r3          0       1996  .18805184  .44902193  .42287182  .36858862  .28514229     178051      13948
+ r4          1       1996  .17994898  .44396897  .39364579   .3598061  .28479799      41449       6371
+ r5          0       1997  .19423032   .4503317  .42482227  .39164719  .30244479     187779      14130
+ r6          1       1997   .1774115  .45732173  .40162028  .38360246  .30249645      44161       6197
+ r7          0       1998  .19839746  .46161793  .43375143  .42271481    .327266     198020      14292
+ r8          1       1998  .17993225  .47121069  .41433147  .41643728  .32789489      45582       5912
+ r9          0       1999   .2075025  .45811054  .43827534   .4347262   .3346616     198886      15180
+r10          1       1999  .18552852  .47063896  .42005121  .43069288  .33761857      45226       6075
+r11          0       2000  .20985417  .44940177  .43261599  .44097126  .33902554     204455      16300
+r12          1       2000  .18730173  .46467154  .42169304  .43814175  .34225306      44149       6158
+r13          0       2001  .21567562  .43870517  .43048767   .4450715  .34210572     203113      16401
+r14          1       2001  .18853185  .45088489   .4155262  .44496189  .34741654      41779       5463
+r15          0       2002  .21902065  .42759821  .42639904  .45305088  .34828611     200461      15682
+r16          1       2002  .19507839  .44504525  .41429288  .45390116  .35369315      39909       4782
+r17          0       2003  .22416698  .44878953  .44617228  .42234766  .32322299     188762      13964
+r18          1       2003  .19923568  .43877229  .41760521  .43300425  .33757463      37271       4315
+r19          0       2004   .2284613  .44815542  .44519364  .43662147  .33407122     187519      13362
+r20          1       2004  .20489867  .43758062  .41915469  .44564045  .34719422      37003       4166
+r21          0       2005  .22823885  .44451904  .44178739  .44815167  .34268802     186208      11894
+r22          1       2005  .20613572  .43749737  .42063557  .45654163  .35506015      35879       3458
+r23          0       2006  .23289529  .43828357  .43843022   .4552566  .34824886     188955      12336
+r24          1       2006  .20510574  .42743308  .40937304  .46341577  .36049648      36762       3342
+r25          0       2007  .23821097  .43185152  .43660408  .45824215  .35073884     192062      12601
+r26          1       2007  .20626411  .41584848  .40397653  .46624115  .36267944      37976       3384
+r27          0       2008  .23993181  .41901869  .42951108  .45997492  .35246896     197069      13305
+r28          1       2008  .21317971  .40989926  .40261164  .46599399  .36332682      39058       3500
+r29          0       2009  .23911292  .40178794  .42015259  .45886588  .35155628     191493      12642
+r30          1       2009   .2073076  .39726493  .38968535  .47277575  .36786814      38277       3377
+r31          0       2010  .23237673  .46821851  .46248692  .43965435    .338726     185539      13373
+r32          1       2010  .20856222  .45980813  .42760911  .43865773  .34457159      37529       3737
+r33          0       2011  .22894435  .47674189  .47256184  .44147477  .34294733     147068      13234
+r34          1       2011   .2082907  .48454553  .45249708  .43612579  .34577453      29648       3540
+r35          0       2012  .21018563   .4910877  .47625612  .44098192  .34669583     197470      12896
+r36          1       2012  .20283528  .49581024  .45623923  .43363558  .34708489      39475       3333
+r37          0       2013  .21025644  .48882485   .4767641  .44085205  .34730802     198464      13149
+r38          1       2013  .20430003  .49137253   .4591845  .43128665  .34421059      39869       3486
+r39          0       2014  .21156501  .48742553  .47650829  .44292522  .34832485     202291      13762
+r40          1       2014  .20322757  .48582807  .45581569  .42991923  .34386261      40782       3631
+r41          0       2015  .21100301  .48520583  .47695065  .43965101  .34491731     205055      14548
+r42          1       2015   .2031205  .48772025  .46266594  .41403994  .33204052      41357       3597
+r43          0       2016  .20979339   .4778387  .47408939  .43606628  .34307023     208817      18576
+r44          1       2016  .20970085  .48519017  .46844224  .41147171  .32852907      42058       4548
+r45          0       2017  .20764516  .47038896  .47047197  .43098696  .33952562     208838     111516
+r46          1       2017  .20627116  .47475602  .46420252  .40499605  .32326406      41955      26352
+
+. matrix list rvar_w93_3_gen
+
+rvar_w93_3_gen[46,9]
+          east       year     r2_ffe     r2_pfe    r2_pred      sd_fe     rsd_fe     n_pers      n_btr
+ r1          0       1995  .35649139  .17036492  .25753311  .35497899  .29881406     169911      14487
+ r2          1       1995  .28902934  .20195357  .29177236  .33759687   .2892562      39417       6767
+ r3          0       1996  .36022396  .16474294   .2636035  .36858862  .31022725     178048      13948
+ r4          1       1996  .29158779  .19636647  .29574215   .3598061  .30737726      41444       6371
+ r5          0       1997  .36851556    .166105  .27140256  .39164719  .32898628     187775      14130
+ r6          1       1997  .29052839  .20279334  .30037503  .38360246   .3272008      44157       6197
+ r7          0       1998  .37803631  .16701607  .27845295  .42271481  .35412941     198017      14292
+ r8          1       1998  .29385133  .20532585  .30317159  .41643728  .35620069      45582       5912
+ r9          0       1999  .37429564  .16844929  .28304949   .4347262  .36358709     198889      15180
+r10          1       1999  .30130845  .20892323  .30848877  .43069288  .36785687      45229       6075
+r11          0       2000  .38771346  .16909431  .29039318  .44097126  .36888327     204455      16300
+r12          1       2000  .30447563  .20518176  .31299372  .43814175  .37421963      44149       6158
+r13          0       2001  .39030569  .16420099  .29175067   .4450715  .37260066     203113      16401
+r14          1       2001   .2999374  .19946728  .30952097  .44496189  .38023324      41778       5463
+r15          0       2002  .38976048  .15912958  .29161004  .45305088   .3790458     200460      15682
+r16          1       2002    .308956  .19730203   .3141301  .45390116  .38725272      39908       4782
+r17          0       2003  .36754308  .18448613   .3175134  .42234766  .35130744     188761      13964
+r18          1       2003  .32485679   .2173874  .33727328  .43300425  .36985073      37271       4315
+r19          0       2004   .3728623  .18661831  .32435433  .43662147  .36312107     187518      13362
+r20          1       2004  .32568014  .20915066  .33329972  .44564045  .38059189      37003       4166
+r21          0       2005  .37629041  .18666702  .32663239  .44815167  .37279532     186211      11894
+r22          1       2005  .32975692  .21523484  .34163655  .45654163  .39028298      35879       3458
+r23          0       2006   .3798148  .18763199  .33241773   .4552566  .37836956     188954      12336
+r24          1       2006  .33069545  .20977585  .33496341  .46341577  .39571665      36762       3342
+r25          0       2007  .38797895  .18695202  .33771738  .45824215  .38089216     192060      12601
+r26          1       2007  .33420747  .19987825  .33095239  .46624115  .39920323      37976       3384
+r27          0       2008  .38325487  .18159338  .33409832  .45997492   .3822698     197069      13305
+r28          1       2008  .33040216  .19481244  .32730361  .46599399  .39809481      39058       3500
+r29          0       2009  .36280061  .17023505  .31403091  .45886588  .38191483     191493      12642
+r30          1       2009  .32465333  .18141823  .31454059  .47277575     .40379      38277       3377
+r31          0       2010  .35069528  .23246432  .35055707  .43965435  .36449444     185544      13373
+r32          1       2010  .32357073  .23863683   .3504528  .43865773  .37657253      37529       3737
+r33          0       2011  .35567548  .23604565  .35283938  .44147477  .36603722     192787      13234
+r34          1       2011   .3315301   .2497769  .36124922  .43612579  .37478005      38792       3540
+r35          0       2012  .35535159  .23349347  .34913762  .44098192   .3657046     197468      12896
+r36          1       2012  .32834417  .24989817  .35885128  .43363558  .37386516      39475       3333
+r37          0       2013  .35055167  .22805025   .3424911  .44085205  .36580968     198462      13149
+r38          1       2013  .31865505  .24590014  .35255655  .43128665  .37215652      39869       3486
+r39          0       2014  .35041485  .22709799  .34245082  .44292522  .36742919     202291      13762
+r40          1       2014  .31910434  .24194527  .35055488  .42991923  .37072077      40782       3631
+r41          0       2015  .34750774  .22805568  .34391545  .43965101  .36486508     205055      14548
+r42          1       2015  .31797071  .24150454  .35099391  .41403994  .35766582      41357       3597
+r43          0       2016  .34662028  .22858679  .34696568  .43606628  .36194152     208817      18576
+r44          1       2016  .33201095  .24272766  .35840735  .41147171  .35447681      42058       4548
+r45          0       2017  .34102238  .22854256  .34786025  .43098696   .3577557     208838     111516
+r46          1       2017   .3212343  .23441654   .3510606  .40499605  .34807363      41955      26352
+
+. 
+. cap log close

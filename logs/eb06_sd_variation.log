@@ -1,0 +1,826 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Josua\Output\214492\/eb06_sd_variation.do.log
+  log type:  text
+ opened on:  28 Jun 2023, 13:48:53
+
+. 
+. 
+. 
+. //====================================================================================
+. //      0. Custom RIF Programms
+. //====================================================================================
+. 
+. //Needed software
+. fdzinstall rif
+checking rif consistency and verifying not already installed...
+all files already exist and are up to date.
+
+. fdzinstall gtools
+checking gtools consistency and verifying not already installed...
+all files already exist and are up to date.
+
+. 
+. //Small helper program for conditional display of strings
+. cap program drop displaycond
+
+. program displaycond 
+  1.         syntax anything, b(integer)
+  2.         if `b'==1{
+  3.                 display "`1'"
+  4.         }
+  5. end     
+
+. 
+. 
+. //A programm to output a matrix of standard deviations of wage residuals
+. cap program drop resid_sd
+
+. program resid_sd 
+  1.         version 13
+  2.     syntax varlist(fv ts) [,v yvar(string)] tag(string) 
+  3.         if "`yvar'"==""{
+  4.                 local yvar = "lwage_imp"
+  5.         }
+  6.         quietly levelsof year, local(ys)
+  7.         display "Computing `yvar' residuals for varlist: `varlist'"
+  8.         tempvar resid loop_temp  
+  9.         quietly gen `resid'=. 
+ 10.         foreach y of local ys{
+ 11.                         forvalues e = 0/1{
+ 12.                                 quietly reg `yvar' `varlist' if east==`e' & year == `y'
+ 13.                                 quietly predict `loop_temp', r
+ 14.                                 quietly replace `resid'= `loop_temp' if east==`e' & year == `y'
+ 15.                                 quietly drop `loop_temp'
+ 16.                         }
+ 17.         }
+ 18.         preserve
+ 19.             gen resid_sd = `resid'
+ 20.                 collapse (sd) sd=`yvar' resid_sd (sum) n_persnr n_betr, by(east year)
+ 21.                 mkmat east year sd resid_sd n_persnr n_betr, mat(m_sd_`tag')
+ 22.         restore
+ 23.         
+.         display "Outputing result matrix"
+ 24.         display ". matrix list m_sd_`tag'"
+ 25.         matrix list m_sd_`tag'
+ 26. end
+
+. 
+. //Residualize a variable by East and Year
+. cap program drop residualize
+
+. program residualize
+  1.     syntax varlist(fv ts) [, yvar(string)] gen(string) 
+  2.         if "`yvar'"==""{
+  3.                 local yvar = "lwage_imp"
+  4.         }
+  5.         display "Computing year X East/West specific residuals of `yvar' by varlist [`varlist'] as `gen'"
+  6.         quietly gen `gen' = .
+  7.         tempvar  loop_temp  
+  8.         quietly levelsof year, local(ys)
+  9.         quietly levelsof east, local(ew)
+ 10.         foreach y of local ys{
+ 11.                 foreach e of local ew{
+ 12.                                 quietly reg `yvar' `varlist' if east==`e' & year == `y'
+ 13.                                 quietly predict `loop_temp', r
+ 14.                                 quietly replace `gen'= `loop_temp' if east==`e' & year == `y'
+ 15.                                 quietly drop `loop_temp'
+ 16.                 }
+ 17.         }
+ 18.         
+. end  
+
+. 
+. 
+. cap program drop rif_resid
+
+. program rif_resid
+  1.         version 13
+  2.     syntax namelist, tag(string)
+  3.         tempvar  groups
+  4.         tempname mfreq
+  5.         gegen `groups' = group(`namelist')
+  6.         quietly tab `groups' , matcell(`mfreq')
+  7.         matrix `mfreq' = `mfreq' / r(N)
+  8.         local matrows:rowsof  `mfreq'
+  9. 
+.         quietly reg w_90_50 i.`groups'
+ 10.         local acc_w_90_50 = 0
+ 11.         forvalues i=1/`matrows'{
+ 12.                 if `i'==1{
+ 13.                         local acc_w_90_50 = `acc_w_90_50' + _b[_cons]*`mfreq'[1,1]
+ 14.                 }
+ 15.                 if `i'>1{
+ 16.                         local acc_w_90_50 = `acc_w_90_50' + _b[`i'.`groups']*`mfreq'[`i',1]
+ 17.                 }
+ 18.         }
+ 19.         quietly reg w_50_10 i.`groups'
+ 20.         local acc_w_50_10 = 0
+ 21.         forvalues i=1/`matrows'{
+ 22.                 if `i'==1{
+ 23.                         local acc_w_50_10 = `acc_w_50_10' + _b[_cons]*`mfreq'[1,1]
+ 24.                 }
+ 25.                 if `i'>1{
+ 26.                         local acc_w_50_10 = `acc_w_50_10' + _b[`i'.`groups']*`mfreq'[`i',1]
+ 27.                 }
+ 28.         }
+ 29.         display "R90-50: `acc_w_90_50'"
+ 30.         display "R50-10: `acc_w_50_10'"
+ 31. 
+. end
+
+. 
+. 
+. /*=============================================================
+>         BHP. Prepare BHP data
+> ===============================================================*/
+. 
+. use "${orig}/siab_7517_v1_bhp_v1_1995.dta", clear
+(SIAB 7517 (v1), 26 Jun 2019, administrative Betriebsdaten)
+
+. forvalues y=1996/2017{
+  2.         append using  "${orig}/siab_7517_v1_bhp_v1_`y'.dta"
+  3. }
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(variable az_ab65_vz was byte, now int to accommodate using data's values)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(variable az_niv1 was byte, now int to accommodate using data's values)
+(variable az_niv2 was byte, now int to accommodate using data's values)
+(variable az_niv3 was byte, now int to accommodate using data's values)
+(variable az_niv4 was byte, now int to accommodate using data's values)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(variable az_niv2 was int, now long to accommodate using data's values)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+(label miss_de already defined)
+(label miss_en already defined)
+
+. 
+. //Merge new data from the BHP-Basis here.
+. merge m:1 betnr jahr using "${orig}/siab_7517_v1_bhp_basis_v1.dta"
+(label miss_de already defined)
+(label miss_en already defined)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                     4,658,523
+        from master                         0  (_merge==1)
+        from using                  4,658,523  (_merge==2)
+
+    Matched                         9,281,933  (_merge==3)
+    -----------------------------------------
+
+. drop if _merge==2
+(4,658,523 observations deleted)
+
+. drop _merge
+
+. 
+. // Number of men working full-time
+. generate az_m_vz = az_vz - az_f_vz
+
+. // Mean imputed gross average daily wage for men (working full-time)
+. generate te_imp_mw_m = ((az_vz*te_imp_mw)-(az_f_vz*te_imp_mw_f)) / (az_vz-az_f_vz) if az_vz != az_f_vz & az_f_vz > 0
+(3,718,444 missing values generated)
+
+. //Exception: establishments with entire workforce composed of men working full-time:
+. replace te_imp_mw_m = te_imp_mw if az_f_vz == 0
+(2,460,100 real changes made, 1,046,662 to missing)
+
+. 
+. save "${data}/bhp_combined.dta", replace
+file \\a0018022.dst.baintern.de\Projekte\usr\fdz1489\data\/bhp_combined.dta saved
+
+. 
+. /*=============================================================
+>         1. Compute base variables (Groups/RIFs)
+> ===============================================================*/
+. 
+. //load SIAB data
+. use "${data}/siab_panel.dta", clear
+(FDZ1489 SIAB Panel - 20 Sep 2022 - 18:37:53)
+
+. drop if female==1
+(2,933,099 observations deleted)
+
+. drop if east   == .
+(/ observations deleted)
+
+. 
+. set matsize 10000
+
+. 
+. //merge AKM
+. merge m:1 persnr using "${orig}/SIAB_7517_v1_akm_pers.dta"
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                       679,048
+        from master                    20,021  (_merge==1)
+        from using                    659,027  (_merge==2)
+
+    Matched                         5,655,805  (_merge==3)
+    -----------------------------------------
+
+. drop if _merge ==2
+(659,027 observations deleted)
+
+. drop _merge
+
+. 
+. merge m:1 betnr using "${orig}/SIAB_7517_v1_akm_estab.dta"
+(label miss_en already defined)
+(label miss_de already defined)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                     1,405,171
+        from master                    17,601  (_merge==1)
+        from using                  1,387,570  (_merge==2)
+
+    Matched                         5,658,225  (_merge==3)
+    -----------------------------------------
+
+. drop if _merge==2
+(1,387,570 observations deleted)
+
+. drop _merge
+
+. 
+. //Merge new data from the BHP-Basis here.
+. merge m:1 betnr jahr using "${data}/bhp_combined.dta"
+(label miss_de already defined)
+(label miss_en already defined)
+(label ao_kreis_de already defined)
+(label ao_kreis_en already defined)
+(label group_w08_3_de already defined)
+(label group_w08_3_en already defined)
+(label group_w73_3_de already defined)
+(label group_w73_3_en already defined)
+(label group_w93_3_de already defined)
+(label group_w93_3_en already defined)
+(label w03_5_de already defined)
+(label w03_5_en already defined)
+(label w08_3_gen_de already defined)
+(label w08_3_gen_en already defined)
+(label w08_5_de already defined)
+(label w08_5_en already defined)
+(label w73_3_de already defined)
+(label w73_3_en already defined)
+(label w73_3_gen_de already defined)
+(label w73_3_gen_en already defined)
+(label w93_3_gen_de already defined)
+(label w93_3_gen_en already defined)
+(label w93_5_de already defined)
+(label w93_5_en already defined)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                     6,213,508
+        from master                         0  (_merge==1)
+        from using                  6,213,508  (_merge==2)
+
+    Matched                         5,675,826  (_merge==3)
+    -----------------------------------------
+
+. drop if _merge==2
+(6,213,508 observations deleted)
+
+. drop _merge
+
+. 
+. 
+. //Contemporaneous Fixed-Effects
+. gen contemp_ffe = .
+(5,675,826 missing values generated)
+
+. replace contemp_ffe = feff_1998_2004 if year <2003
+(1,977,814 real changes made)
+
+. replace contemp_ffe = feff_2003_2010 if year >=2003 & year <2010
+(1,616,252 real changes made)
+
+. replace contemp_ffe = feff_2010_2017 if year >=2010 & year <=2017
+(1,947,266 real changes made)
+
+.         
+. gen contemp_pfe = .
+(5,675,826 missing values generated)
+
+. replace contemp_pfe = peff_1998_2004 if year <2003
+(1,917,905 real changes made)
+
+. replace contemp_pfe = peff_2003_2010 if year >=2003 & year <2010
+(1,594,648 real changes made)
+
+. replace contemp_pfe = peff_2010_2017 if year >=2010 & year <=2017       
+(1,921,518 real changes made)
+
+. 
+. 
+. //Quartiles of contemporaneous FE 
+. gquantiles q_firm  = contemp_ffe, xtile nq(4) by(east year)
+
+. gquantiles q_pers  = contemp_pfe, xtile nq(4) by(east year)
+
+. 
+. //20 Quantiles of firm fixed-effects (If we only want to include dummies into our spec)
+. gquantiles ffe20  = contemp_ffe, xtile nq(20) by(east year)
+
+. 
+. tab q_firm east,m
+
+           |         east
+    q_firm |      west       east |     Total
+-----------+----------------------+----------
+         1 | 1,147,418    237,956 | 1,385,374 
+         2 | 1,147,429    237,957 | 1,385,386 
+         3 | 1,147,424    237,948 | 1,385,372 
+         4 | 1,147,294    237,906 | 1,385,200 
+         . |   102,140     32,354 |   134,494 
+-----------+----------------------+----------
+     Total | 4,691,705    984,121 | 5,675,826 
+
+. tab q_pers east,m
+
+           |         east
+    q_pers |      west       east |     Total
+-----------+----------------------+----------
+         1 | 1,123,991    234,564 | 1,358,555 
+         2 | 1,123,961    234,548 | 1,358,509 
+         3 | 1,123,964    234,547 | 1,358,511 
+         4 | 1,123,955    234,541 | 1,358,496 
+         . |   195,834     45,921 |   241,755 
+-----------+----------------------+----------
+     Total | 4,691,705    984,121 | 5,675,826 
+
+. 
+. 
+. //Use w93_3_gen to create 2-digit industries
+. gen ind2d = floor(w93_3_gen/10)
+(113 missing values generated)
+
+. rename beruf occ3
+
+. 
+. //Bet and Persnr indicators for the counters
+. gsort betnr 
+
+. by betnr: gen n_betr = _n==_N
+
+. gsort persnr 
+
+. by persnr: gen n_persnr = _n==_N
+
+. 
+. /*Hier werden verschiedene Tabellen mit Standardabweichungen der Log-Löhne und Standard-Abweichungen von Log-Lohnresidualen für Ost/West X Jahres-zellen ausgegeben 
+> für unterschiedliche Mincer-Gleichungen ausgebenen. Jede Tabelle entspricht einer der Spezifikationen des Programms resid_sd weiter oben. Es werden immer alle Beobachtungen 
+> in einer Ost/West X Jahres-zelle genutzt und die Beobachtungszahlen für Personen und Betriebe sind in den letzten beiden Spalten angegeben. 
+> 
+>  */
+.  
+. //Compute standard deviations of wages
+. resid_sd i.educ i.age_q, tag(educ)
+Computing lwage_imp residuals for varlist: i.educ i.age_q
+(70,843 missing values generated)
+Outputing result matrix
+. matrix list m_sd_educ
+
+m_sd_educ[46,6]
+          east       year         sd   resid_sd   n_persnr     n_betr
+ r1          0       1995  .37487656  .31696758      35161      14487
+ r2          0       1996  .37612697  .32096776      25919      13948
+ r3          0       1997  .38875929  .33098063      21852      14130
+ r4          0       1998  .40322915  .33920488      19991      14292
+ r5          0       1999  .41577947  .34946522      18369      15180
+ r6          0       2000  .42139974  .35470816      17879      16300
+ r7          0       2001  .42815596  .36005312      17365      16401
+ r8          0       2002  .43769941  .36698452      16064      15682
+ r9          0       2003   .4451142   .3733851      14338      13964
+r10          0       2004  .45733094  .38386151      13905      13362
+r11          0       2005  .46634096  .39083385      13006      11894
+r12          0       2006  .47927114   .4027375      13257      12336
+r13          0       2007  .48843896  .41115269      13927      12601
+r14          0       2008  .49295908  .41653323      14480      13305
+r15          0       2009  .48809311  .41076425      14138      12642
+r16          0       2010  .49811289  .41915259      14381      13373
+r17          0       2011  .49048865  .41061082      15878      13234
+r18          0       2012  .47875187  .40065062      16803      12896
+r19          0       2013  .47379208  .39551002      17517      13149
+r20          0       2014  .47407728  .39547974      19394      13762
+r21          0       2015  .47027403   .3914887      22164      14548
+r22          0       2016  .46747264  .38886133      26278      18576
+r23          0       2017  .46671852  .38653809      34236     111516
+r24          1       1995  .37752742  .33119351      10413       6767
+r25          1       1996  .38521507  .33913103       7440       6371
+r26          1       1997  .39514577  .34603098       5952       6197
+r27          1       1998  .41015631  .35686657       5129       5912
+r28          1       1999  .41997242  .36308193       4626       6075
+r29          1       2000  .42747366  .36994708       4223       6158
+r30          1       2001  .43737608  .37606111       3808       5463
+r31          1       2002  .44966179  .38646659       3402       4782
+r32          1       2003  .45982274  .39598072       3218       4315
+r33          1       2004  .47129008  .40652928       3007       4166
+r34          1       2005  .47671142  .41144928       2689       3458
+r35          1       2006   .4905611  .42264417       2699       3342
+r36          1       2007  .49493822  .42733866       2949       3384
+r37          1       2008  .49685484  .42970181       3095       3500
+r38          1       2009  .50519872  .43697163       3174       3377
+r39          1       2010  .51239407  .44125268       3089       3737
+r40          1       2011  .49231133  .41907701       3499       3540
+r41          1       2012  .47753489  .40704405       3538       3333
+r42          1       2013  .46999604  .40164396       3614       3486
+r43          1       2014  .46761036  .39946896       3977       3631
+r44          1       2015  .44459879  .37924787       4452       3597
+r45          1       2016  .44239914  .37707001       5257       4548
+r46          1       2017  .43785018  .37343767       6659      26352
+
+. resid_sd i.educ i.age_q i.ind2d, tag(ind2d)
+Computing lwage_imp residuals for varlist: i.educ i.age_q i.ind2d
+(70,946 missing values generated)
+Outputing result matrix
+. matrix list m_sd_ind2d
+
+m_sd_ind2d[46,6]
+          east       year         sd   resid_sd   n_persnr     n_betr
+ r1          0       1995  .37487656  .29508719      35161      14487
+ r2          0       1996  .37612697  .29737681      25919      13948
+ r3          0       1997  .38875929  .30622813      21852      14130
+ r4          0       1998  .40322915  .31401592      19991      14292
+ r5          0       1999  .41577947  .32328945      18369      15180
+ r6          0       2000  .42139974  .32598412      17879      16300
+ r7          0       2001  .42815596  .33089995      17365      16401
+ r8          0       2002  .43769941  .33639431      16064      15682
+ r9          0       2003   .4451142  .34127131      14338      13964
+r10          0       2004  .45733094  .34947678      13905      13362
+r11          0       2005  .46634096  .35487139      13006      11894
+r12          0       2006  .47927114  .36433125      13257      12336
+r13          0       2007  .48843896  .36984271      13927      12601
+r14          0       2008  .49295908  .37473854      14480      13305
+r15          0       2009  .48809311  .37339401      14138      12642
+r16          0       2010  .49811289   .3792308      14381      13373
+r17          0       2011  .49048865  .37070987      15878      13234
+r18          0       2012  .47875187  .36204368      16803      12896
+r19          0       2013  .47379208  .35825717      17517      13149
+r20          0       2014  .47407728  .35779777      19394      13762
+r21          0       2015  .47027403  .35419089      22164      14548
+r22          0       2016  .46747264  .35199732      26278      18576
+r23          0       2017  .46671852  .35084614      34236     111516
+r24          1       1995  .37752742  .31356636      10413       6767
+r25          1       1996  .38521507   .3191455       7440       6371
+r26          1       1997  .39514577  .32438445       5952       6197
+r27          1       1998  .41015631  .33363613       5129       5912
+r28          1       1999  .41997242  .33823839       4626       6075
+r29          1       2000  .42747366  .34335488       4223       6158
+r30          1       2001  .43737608  .34941545       3808       5463
+r31          1       2002  .44966179  .35671604       3402       4782
+r32          1       2003  .45982274  .36543939       3218       4315
+r33          1       2004  .47129008  .37533018       3007       4166
+r34          1       2005  .47671142   .3768039       2689       3458
+r35          1       2006   .4905611  .38718873       2699       3342
+r36          1       2007  .49493822  .39218831       2949       3384
+r37          1       2008  .49685484  .39331365       3095       3500
+r38          1       2009  .50519872  .40131024       3174       3377
+r39          1       2010  .51239407  .40396824       3089       3737
+r40          1       2011  .49231133  .38356361       3499       3540
+r41          1       2012  .47753489  .37248477       3538       3333
+r42          1       2013  .46999604  .36895236       3614       3486
+r43          1       2014  .46761036  .36544198       3977       3631
+r44          1       2015  .44459879  .34804353       4452       3597
+r45          1       2016  .44239914  .34582242       5257       4548
+r46          1       2017  .43785018  .34453395       6659      26352
+
+. resid_sd i.educ i.age_q i.ind2d i.occ3, tag(occ3)
+Computing lwage_imp residuals for varlist: i.educ i.age_q i.ind2d i.occ3
+(127,645 missing values generated)
+Outputing result matrix
+. matrix list m_sd_occ3
+
+m_sd_occ3[46,6]
+          east       year         sd   resid_sd   n_persnr     n_betr
+ r1          0       1995  .37487656  .26644373      35161      14487
+ r2          0       1996  .37612697  .26837718      25919      13948
+ r3          0       1997  .38875929  .27662203      21852      14130
+ r4          0       1998  .40322915  .28431159      19991      14292
+ r5          0       1999  .41577947  .29238084      18369      15180
+ r6          0       2000  .42139974  .29373196      17879      16300
+ r7          0       2001  .42815596  .29734749      17365      16401
+ r8          0       2002  .43769941  .30186793      16064      15682
+ r9          0       2003   .4451142  .30447426      14338      13964
+r10          0       2004  .45733094  .31181702      13905      13362
+r11          0       2005  .46634096  .31665725      13006      11894
+r12          0       2006  .47927114  .32519525      13257      12336
+r13          0       2007  .48843896  .32880318      13927      12601
+r14          0       2008  .49295908   .3326835      14480      13305
+r15          0       2009  .48809311  .33172184      14138      12642
+r16          0       2010  .49811289  .33718175      14381      13373
+r17          0       2011  .49048865  .32685465      15878      13234
+r18          0       2012  .47875187  .31620714      16803      12896
+r19          0       2013  .47379208  .31317323      17517      13149
+r20          0       2014  .47407728  .31276318      19394      13762
+r21          0       2015  .47027403   .3086386      22164      14548
+r22          0       2016  .46747264  .30646259      26278      18576
+r23          0       2017  .46671852  .30551392      34236     111516
+r24          1       1995  .37752742  .28277084      10413       6767
+r25          1       1996  .38521507  .28741956       7440       6371
+r26          1       1997  .39514577  .29152665       5952       6197
+r27          1       1998  .41015631  .30039459       5129       5912
+r28          1       1999  .41997242  .30361855       4626       6075
+r29          1       2000  .42747366  .30771071       4223       6158
+r30          1       2001  .43737608  .31342053       3808       5463
+r31          1       2002  .44966179  .31844154       3402       4782
+r32          1       2003  .45982274  .32551092       3218       4315
+r33          1       2004  .47129008  .33325395       3007       4166
+r34          1       2005  .47671142  .33521467       2689       3458
+r35          1       2006   .4905611  .34607619       2699       3342
+r36          1       2007  .49493822   .3505173       2949       3384
+r37          1       2008  .49685484  .35110041       3095       3500
+r38          1       2009  .50519872  .35915649       3174       3377
+r39          1       2010  .51239407   .3605538       3089       3737
+r40          1       2011  .49231133  .34126174       3499       3540
+r41          1       2012  .47753489  .32840955       3538       3333
+r42          1       2013  .46999604  .32485923       3614       3486
+r43          1       2014  .46761036  .32307127       3977       3631
+r44          1       2015  .44459879   .3058441       4452       3597
+r45          1       2016  .44239914  .30364871       5257       4548
+r46          1       2017  .43785018  .30131742       6659      26352
+
+. resid_sd i.educ i.age_q i.ind2d i.occ3 contemp_ffe, tag(firm_fe)
+Computing lwage_imp residuals for varlist: i.educ i.age_q i.ind2d i.occ3 contemp_ffe
+(257,618 missing values generated)
+Outputing result matrix
+. matrix list m_sd_firm_fe
+
+m_sd_firm_fe[46,6]
+          east       year         sd   resid_sd   n_persnr     n_betr
+ r1          0       1995  .37487656  .23558518      35161      14487
+ r2          0       1996  .37612697   .2357868      25919      13948
+ r3          0       1997  .38875929   .2428806      21852      14130
+ r4          0       1998  .40322915  .24735136      19991      14292
+ r5          0       1999  .41577947  .25159043      18369      15180
+ r6          0       2000  .42139974  .25153959      17879      16300
+ r7          0       2001  .42815596  .25458705      17365      16401
+ r8          0       2002  .43769941  .25790542      16064      15682
+ r9          0       2003   .4451142  .26005188      14338      13964
+r10          0       2004  .45733094  .26368234      13905      13362
+r11          0       2005  .46634096  .26577577      13006      11894
+r12          0       2006  .47927114   .2695356      13257      12336
+r13          0       2007  .48843896  .27300951      13927      12601
+r14          0       2008  .49295908  .27515772      14480      13305
+r15          0       2009  .48809311  .27439421      14138      12642
+r16          0       2010  .49811289  .28041139      14381      13373
+r17          0       2011  .49048865  .27474955      15878      13234
+r18          0       2012  .47875187  .26584882      16803      12896
+r19          0       2013  .47379208  .26436272      17517      13149
+r20          0       2014  .47407728  .26445809      19394      13762
+r21          0       2015  .47027403  .26227045      22164      14548
+r22          0       2016  .46747264  .26169991      26278      18576
+r23          0       2017  .46671852  .26286548      34236     111516
+r24          1       1995  .37752742  .23187114      10413       6767
+r25          1       1996  .38521507  .22895801       7440       6371
+r26          1       1997  .39514577   .2283756       5952       6197
+r27          1       1998  .41015631  .22744089       5129       5912
+r28          1       1999  .41997242  .22951494       4626       6075
+r29          1       2000  .42747366  .23173118       4223       6158
+r30          1       2001  .43737608  .23502418       3808       5463
+r31          1       2002  .44966179  .23615976       3402       4782
+r32          1       2003  .45982274  .24519622       3218       4315
+r33          1       2004  .47129008  .24856737       3007       4166
+r34          1       2005  .47671142  .25148135       2689       3458
+r35          1       2006   .4905611  .25417152       2699       3342
+r36          1       2007  .49493822  .25926587       2949       3384
+r37          1       2008  .49685484   .2585988       3095       3500
+r38          1       2009  .50519872  .26298898       3174       3377
+r39          1       2010  .51239407  .26634887       3089       3737
+r40          1       2011  .49231133  .25737894       3499       3540
+r41          1       2012  .47753489  .24719068       3538       3333
+r42          1       2013  .46999604  .24580827       3614       3486
+r43          1       2014  .46761036    .245055       3977       3631
+r44          1       2015  .44459879  .23566759       4452       3597
+r45          1       2016  .44239914  .23707077       5257       4548
+r46          1       2017  .43785018  .23852137       6659      26352
+
+. 
+. 
+. //Residualize 
+. residualize i.educ i.age_q i.ind2d , gen(r_demo_ind2)
+Computing year X East/West specific residuals of lwage_imp by varlist [i.educ i.age_q i.ind2d] as r_demo_ind2
+
+. residualize i.educ i.age_q i.ind2d i.occ3, gen(r_full)
+Computing year X East/West specific residuals of lwage_imp by varlist [i.educ i.age_q i.ind2d i.occ3] as r_full
+
+. residualize i.educ i.age_q i.w93_3_gen, gen(r_demo_ind3)
+Computing year X East/West specific residuals of lwage_imp by varlist [i.educ i.age_q i.w93_3_gen] as r_demo_ind3
+
+. 
+. /*Hier werden verschiedene Tabellen mit Standard-Abweichungen nach Industrie/Beruf, sowie der Standard-Abweichungen  vonnach firmen-fixen Effekten residualisierten Log-Lohnresidualen 
+> für Ost/West X Jahres-zellen ausgegeben 
+> für unterschiedliche Mincer-Gleichungen ausgebenen. Jede Tabelle entspricht einer der Spezifikationen des Programms resid_sd weiter oben. Es werden immer alle Beobachtungen 
+> in einer Ost/West X Jahres-zelle genutzt und die Beobachtungszahlen für Personen und Betriebe sind in den letzten beiden Spalten angegeben. 
+> 
+>  */
+. //Resiudals of residualized wages (what part of variation is within/between industry and occupation)
+. resid_sd contemp_ffe, yvar(r_demo_ind2) tag(demo_ind2_ffe)
+Computing r_demo_ind2 residuals for varlist: contemp_ffe
+(201,995 missing values generated)
+Outputing result matrix
+. matrix list m_sd_demo_ind2_ffe
+
+m_sd_demo_ind2_ffe[46,6]
+          east       year         sd   resid_sd   n_persnr     n_betr
+ r1          0       1995  .29508719  .27106765      35161      14487
+ r2          0       1996  .29737681  .27232063      25919      13948
+ r3          0       1997  .30622813  .28066012      21852      14130
+ r4          0       1998  .31401592  .28648755      19991      14292
+ r5          0       1999  .32328945  .29194558      18369      15180
+ r6          0       2000  .32598412  .29382244      17879      16300
+ r7          0       2001  .33089995  .29762354      17365      16401
+ r8          0       2002  .33639431  .30192614      16064      15682
+ r9          0       2003  .34127131   .3057887      14338      13964
+r10          0       2004  .34947678  .31096166      13905      13362
+r11          0       2005  .35487139  .31443864      13006      11894
+r12          0       2006  .36433125  .31978139      13257      12336
+r13          0       2007  .36984271  .32496494      13927      12601
+r14          0       2008  .37473854  .32762966      14480      13305
+r15          0       2009  .37339401  .32660308      14138      12642
+r16          0       2010   .3792308  .33262846      14381      13373
+r17          0       2011  .37070987  .32620168      15878      13234
+r18          0       2012  .36204368   .3201662      16803      12896
+r19          0       2013  .35825717  .31756872      17517      13149
+r20          0       2014  .35779777  .31763208      19394      13762
+r21          0       2015  .35419089  .31527057      22164      14548
+r22          0       2016  .35199732  .31402072      26278      18576
+r23          0       2017  .35084614  .31412765      34236     111516
+r24          1       1995  .31356636  .26998505      10413       6767
+r25          1       1996   .3191455  .26827422       7440       6371
+r26          1       1997  .32438445  .26906714       5952       6197
+r27          1       1998  .33363613    .270603       5129       5912
+r28          1       1999  .33823839  .27357614       4626       6075
+r29          1       2000  .34335488  .27644512       4223       6158
+r30          1       2001  .34941545  .28076333       3808       5463
+r31          1       2002  .35671604  .28412116       3402       4782
+r32          1       2003  .36543939  .29639173       3218       4315
+r33          1       2004  .37533018  .30165774       3007       4166
+r34          1       2005   .3768039  .30473644       2689       3458
+r35          1       2006  .38718873  .30848318       2699       3342
+r36          1       2007  .39218831   .3140347       2949       3384
+r37          1       2008  .39331365  .31346577       3095       3500
+r38          1       2009  .40131024  .31884584       3174       3377
+r39          1       2010  .40396824  .32482037       3089       3737
+r40          1       2011  .38356361    .311279       3499       3540
+r41          1       2012  .37248477  .30381107       3538       3333
+r42          1       2013  .36895236  .30086994       3614       3486
+r43          1       2014  .36544198  .29851833       3977       3631
+r44          1       2015  .34804353  .28775153       4452       3597
+r45          1       2016  .34582242  .28827089       5257       4548
+r46          1       2017  .34453395  .28916278       6659      26352
+
+. resid_sd contemp_ffe, yvar(r_full) tag(fullspec_ffe)
+Computing r_full residuals for varlist: contemp_ffe
+(257,618 missing values generated)
+Outputing result matrix
+. matrix list m_sd_fullspec_ffe
+
+m_sd_fullspec_ffe[46,6]
+          east       year         sd   resid_sd   n_persnr     n_betr
+ r1          0       1995  .26644373  .24358022      35161      14487
+ r2          0       1996  .26837718  .24473464      25919      13948
+ r3          0       1997  .27662203  .25297475      21852      14130
+ r4          0       1998  .28431159   .2594015      19991      14292
+ r5          0       1999  .29238084  .26483983      18369      15180
+ r6          0       2000  .29373196  .26576757      17879      16300
+ r7          0       2001  .29734749  .26900408      17365      16401
+ r8          0       2002  .30186793  .27290896      16064      15682
+ r9          0       2003  .30447426  .27437598      14338      13964
+r10          0       2004  .31181702  .27980357      13905      13362
+r11          0       2005  .31665725  .28304508      13006      11894
+r12          0       2006  .32519525  .28875732      13257      12336
+r13          0       2007  .32880318   .2931293      13927      12601
+r14          0       2008   .3326835  .29588082      14480      13305
+r15          0       2009  .33172184  .29439202      14138      12642
+r16          0       2010  .33718175  .29882076      14381      13373
+r17          0       2011  .32685465  .29227915      15878      13234
+r18          0       2012  .31620714  .28232181      16803      12896
+r19          0       2013  .31317323  .28004184      17517      13149
+r20          0       2014  .31276318  .28002024      19394      13762
+r21          0       2015   .3086386  .27716175      22164      14548
+r22          0       2016  .30646259  .27600819      26278      18576
+r23          0       2017  .30551392  .27614686      34236     111516
+r24          1       1995  .28277084  .24621287      10413       6767
+r25          1       1996  .28741956  .24610049       7440       6371
+r26          1       1997  .29152665  .24662282       5952       6197
+r27          1       1998  .30039459  .24942324       5129       5912
+r28          1       1999  .30361855   .2525374       4626       6075
+r29          1       2000  .30771071  .25545576       4223       6158
+r30          1       2001  .31342053  .25930604       3808       5463
+r31          1       2002  .31844154  .26238212       3402       4782
+r32          1       2003  .32551092  .27082974       3218       4315
+r33          1       2004  .33325395  .27652085       3007       4166
+r34          1       2005  .33521467  .27956724       2689       3458
+r35          1       2006  .34607619  .28520933       2699       3342
+r36          1       2007   .3505173  .28953645       2949       3384
+r37          1       2008  .35110041  .29005396       3095       3500
+r38          1       2009  .35915649  .29503861       3174       3377
+r39          1       2010   .3605538  .29769284       3089       3737
+r40          1       2011  .34126174   .2862649       3499       3540
+r41          1       2012  .32840955  .27468437       3538       3333
+r42          1       2013  .32485923  .27170554       3614       3486
+r43          1       2014  .32307127  .27016899       3977       3631
+r44          1       2015   .3058441  .25807422       4452       3597
+r45          1       2016  .30364871  .25859201       5257       4548
+r46          1       2017  .30131742  .25806805       6659      26352
+
+. resid_sd contemp_ffe, yvar(r_demo_ind3) tag(demo_ind3_ffe)
+Computing r_demo_ind3 residuals for varlist: contemp_ffe
+(201,995 missing values generated)
+Outputing result matrix
+. matrix list m_sd_demo_ind3_ffe
+
+m_sd_demo_ind3_ffe[46,6]
+          east       year         sd   resid_sd   n_persnr     n_betr
+ r1          0       1995  .28678954  .26712522      35161      14487
+ r2          0       1996  .28874579  .26843444      25919      13948
+ r3          0       1997  .29680428  .27676848      21852      14130
+ r4          0       1998  .30407423  .28297925      19991      14292
+ r5          0       1999  .31226003  .28832862      18369      15180
+ r6          0       2000  .31385979  .28967306      17879      16300
+ r7          0       2001  .31818751  .29325071      17365      16401
+ r8          0       2002  .32311153  .29755306      16064      15682
+ r9          0       2003  .32708833   .3001253      14338      13964
+r10          0       2004  .33407217  .30527422      13905      13362
+r11          0       2005  .33922252  .30894965      13006      11894
+r12          0       2006  .34765232  .31430641      13257      12336
+r13          0       2007  .35248309  .31958455      13927      12601
+r14          0       2008  .35669273  .32237056      14480      13305
+r15          0       2009  .35688141  .32176301      14138      12642
+r16          0       2010  .36140296  .32541808      14381      13373
+r17          0       2011  .35283026  .31917062      15878      13234
+r18          0       2012  .34435189  .31283462      16803      12896
+r19          0       2013  .34220663  .31132543      17517      13149
+r20          0       2014  .34177342  .31140873      19394      13762
+r21          0       2015  .33799693  .30881777      22164      14548
+r22          0       2016  .33574384  .30745214      26278      18576
+r23          0       2017  .33488178  .30761287      34236     111516
+r24          1       1995  .30153048  .26835921      10413       6767
+r25          1       1996  .30695343  .26762751       7440       6371
+r26          1       1997  .31064707  .26908711       5952       6197
+r27          1       1998  .31924304  .27163228       5129       5912
+r28          1       1999  .32285291  .27453813       4626       6075
+r29          1       2000  .32693771  .27748385       4223       6158
+r30          1       2001  .33276713  .28167024       3808       5463
+r31          1       2002  .33826521  .28474399       3402       4782
+r32          1       2003  .34648889  .29603511       3218       4315
+r33          1       2004  .35554209  .30170795       3007       4166
+r34          1       2005  .35763496  .30501947       2689       3458
+r35          1       2006  .36720443  .30972815       2699       3342
+r36          1       2007  .37230057  .31526193       2949       3384
+r37          1       2008  .37362123  .31472293       3095       3500
+r38          1       2009  .38072503  .31986588       3174       3377
+r39          1       2010  .38259181   .3220998       3089       3737
+r40          1       2011  .36330682  .30910078       3499       3540
+r41          1       2012  .35276279  .30186743       3538       3333
+r42          1       2013  .34984231  .29904008       3614       3486
+r43          1       2014  .34705424  .29693022       3977       3631
+r44          1       2015  .32990655   .2852309       4452       3597
+r45          1       2016  .32721695  .28565073       5257       4548
+r46          1       2017  .32598048  .28594199       6659      26352
+
+. 
+. cap log close
