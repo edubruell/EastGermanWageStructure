@@ -4,7 +4,7 @@
 This repository contains code, data preparation scripts, and supporting material for the paper:
 
 **Eduard Brüll (ZEW Mannheim) & Christina Gathmann (LISER, University of Luxembourg and CEPR)**  
-*"Evolution of the East German Wage Structure"*:contentReference[oaicite:0]{index=0}
+*"Evolution of the East German Wage Structure"*
 
 
 
@@ -18,9 +18,9 @@ EastGermanWageStructure/
 ├── logs/                            # Log files from remote Stata runs
 ├── plots/                           # Generated plots for the paper from remote run logs
 ├── smalldata/                       # Supplementary input data (Destatis, union coverage, KLEMS, etc.)
-├── paper\_plots.R                   # R script for producing paper figures/tables from remote run logs
-├── prepare\_KLEMS.R                 # Script to process KLEMS data
-├── retrieve\_destatis\_data.R       # Script to download and cache Destatis data
+├── paper_plots.R                   # R script for producing paper figures/tables from remote run logs
+├── prepare_KLEMS.R                 # Script to process KLEMS data
+├── retrieve_destatis_data.R       # Script to download and cache Destatis data
 ```
 
 ---
