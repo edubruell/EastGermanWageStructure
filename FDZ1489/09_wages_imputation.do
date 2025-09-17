@@ -399,7 +399,7 @@ gen lwage_imp = ln(wage_imp)
 ********************************************************************************
 drop 	educ_tmp old age_sq age_old age_sq_old tenure_sq						///
 		ln_wage_mean_worker only_one_obs ln_wage_mean_firm only_one_worker		///
-		limit_assess4 ln_limit_assess4 ln_wage ln_wage_cens wage_imp_int ln_wage_imp 
+		limit_assess4 ln_limit_assess4 ln_wage_cens wage_imp_int ln_wage_imp 
 
 tab jahr
 

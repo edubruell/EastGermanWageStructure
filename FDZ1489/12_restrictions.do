@@ -273,6 +273,7 @@ replace sector = 2 if inrange(industry1_destatis,4,5)   //Manufacturing
 replace sector = 3 if industry1_destatis == 6           //Construction
 replace sector = 4 if inrange(industry1_destatis,7,15)  //Services
 
+
 //Idea: Public vs. Private sector
 gen svbroad = sector
 replace svbroad = 4 if inrange(industry1_destatis,12,14) //Eduaction, Pub. Admin, Health
@@ -299,6 +300,9 @@ replace sector_d = 3 if inrange(w93_3_gen,451,454)               //Construction
 replace sector_d = 4 if inrange(w93_3_gen,501,954)               //Services
 replace sector_d = 5 if inrange(w93_3_gen,401,410)               //Utilites
 
+gen construction = sector_d == 3
+
+
 // Contemporaneous Fixed-Effects using AKM intervals from 1995 onward
 gen contemp_ffe = .
 replace contemp_ffe = feff_1993_1999   if year >= 1995 & year < 2000
@@ -315,8 +319,14 @@ replace contemp_pfe = peff_2014_2021   if year >= 2014 & year <= 2021
 // Quartiles of contemporaneous fixed effects (by region and year)
 gquantiles q_firm = contemp_ffe, xtile nq(4) by(east year)
 gquantiles q_pers = contemp_pfe, xtile nq(4) by(east year)
+
+
 tab q_firm east,m
 tab q_pers east,m
+
+gegen tw_fe = group(q_firm q_pers)
+tab tw_fe q_firm
+tab tw_fe q_pers
 
 //firm fixed effect classes within east and year
 gquantiles wr  = contemp_ffe, xtile nq(20) by(east year)
@@ -329,8 +339,6 @@ predict non_firm_wage, r
 
 //Use w93_3_gen to create 2-digit industries
 gen ind2d = floor(w93_3_gen/10)
-
-gen construction = sector_d == 3
 
 //Firm size quartiles
 sum az_ges, detail

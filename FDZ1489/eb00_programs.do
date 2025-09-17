@@ -293,6 +293,124 @@ program dfl_pct
 end
 
 //--------------------------------------------------------------
+// Program: dfl_pct_custom
+// Purpose: DFL-reweighted wage percentiles (15/50/85) by east×year
+// Usage:   dfl_pct_custom i.x1 i.x2 ..., v byear(1995) tag(mytag)
+// Notes:   Appends person/establishment counts to the output matrix
+//--------------------------------------------------------------
+cap program drop dfl_pct_custom
+program define dfl_pct_custom
+    version 14
+    // parse: varlist supports factor/ts vars; options v, byear(), tag()
+    syntax varlist(fv ts) [, v byear(int 1995) TAG(string)]
+
+    // verbosity flag for displaycond (if available)
+    local b_verbose = ("`v'" == "v")
+    if "`tag'" == "" {
+        local tag "custom"
+    }
+
+    displaycond "DFL-weighted percentiles for `tag'" , b(`b_verbose')
+
+    //--- Percentiles with DFL weights
+    preserve
+        keep if year >= `byear'
+        dfl_yearly `varlist', cyear(`byear') gen("otf_dfl")
+        gcollapse (p15) p15 = mwage ///
+                  (p50) p50 = mwage ///
+                  (p85) p85 = mwage [pw=otf_dfl], by(east year)
+        mkmat east year p15 p50 p85, mat(m_p_dfl_`tag')
+    restore
+
+    //--- Observation counts to append later
+    preserve
+        keep if year >= `byear'
+        gcollapse (sum) n_persnr n_betr, by(east year)
+        mkmat n_persnr n_betr, mat(m_obs_mat)
+    restore
+
+    //--- Append counts as final two columns
+    matrix m_p_dfl_`tag' = m_p_dfl_`tag' , m_obs_mat
+end
+
+
+//--------------------------------------------------------------
+// Program: mat_ncheck
+// Purpose: Quick diagnostics for a matrix that contains  
+//          two count columns (persons, establishments).
+//          Reports minima of observation counts and 
+//          and how often n_betr > n_pers per row.
+// Usage:   mat_ncheck <matrix>, pers(<colname>) betr(<colname>)
+// Inputs:
+//   - matrix:  Name of an existing Stata matrix
+//   - pers():  Column name in matrix holding person counts
+//   - betr():  Column name in matrix holding establishment counts
+// Notes:
+//   - Uses colnumb() to locate columns by *column name*.
+//   - Does not modify the matrix; uses preserve/restore.
+//--------------------------------------------------------------
+cap program drop mat_ncheck
+program define mat_ncheck, rclass
+    version 14.2
+    // usage: mat_ncheck <matrix>, pers(<colname>) betr(<colname>)
+    syntax name(name=matname id="matrix") , PERS(name) BETR(name)
+
+    //--- Confirm matrix exists
+    capture confirm matrix `matname'
+    if _rc {
+        di as err "matrix `matname' not found"
+        exit 111
+    }
+
+    //--- Find column positions by name
+    local pcol = colnumb(`matname', "`pers'")
+    if missing(`pcol') {
+        di as err "column `pers' not found in `matname'"
+        exit 111
+    }
+    local bcol = colnumb(`matname', "`betr'")
+    if missing(`bcol') {
+        di as err "column `betr' not found in `matname'"
+        exit 111
+    }
+
+    //--- Compute diagnostics on a temp dataset
+    preserve
+        quietly {
+            clear
+            svmat double `matname', names(col)
+            // sanity: ensure both requested vars exist after svmat
+            confirm variable `pers'
+            confirm variable `betr'
+
+            summarize `pers', detail
+            local min_pers = r(min)
+
+            summarize `betr', detail
+            local min_betr = r(min)
+
+            count if `betr' > `pers'
+            local n_weird = r(N)
+        }
+    restore
+
+    //--- Pretty, aligned output (SMCL-friendly)
+    //     Uses {hline} and {col} for tidy alignment
+    di as txt "{hline 80}"
+    di as txt "{col 3}Quick Observation counts for matrix: {col 24}" as res "`matname'"
+    di as txt "{hline 80}"
+    di as txt "{col 3}Lowest establishment count across rows = min(n_betr):{col 60}"  ///
+        as res %9.0gc `min_betr'
+    di as txt "{col 3}Lowest person count across rows =  min(n_pers):{col 60}"        ///
+        as res %9.0gc `min_pers'
+    di as txt "{col 3}Rows with n_betr > n_pers:{col 60}"                    ///
+        as res %9.0gc `n_weird'
+    di as txt "{hline 80}"
+end
+
+
+
+//--------------------------------------------------------------
 // Program: output_mtx
 // Purpose: Display matrices with RIF decomposition results 
 //          (percentiles, wage gaps, and group shares).
@@ -308,10 +426,12 @@ program output_mtx
 	foreach name in `namelist'{
 		display _newline
 		display "Ausgabe der RIF-Werte für Perzentile mit und ohne Gewichtung"
+		mat_ncheck r_`name', pers(n_persnr) betr(n_betr)
 		display ". matrix list r_`name'"
 		matrix list r_`name'
 		display _newline
 		display "Ausgabe der RIF-Werte für Lohnluecken und Gruppen-Anteile mit und ohne Gewichtung"
+		mat_ncheck s_`name', pers(n_persnr) betr(n_betr)
 		display ". matrix list s_`name'"
 		matrix list s_`name'
 	}

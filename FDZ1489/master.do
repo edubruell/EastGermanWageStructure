@@ -17,6 +17,18 @@ set linesize 255
 // adopath ++ "$prog"
 global prepare_data = 1
 
+/*-------------------------------------------------------
+ *    AUSGABE EINER DATEILISTE VORAB
+ *-------------------------------------------------------*/
+capture log close
+log using "${log}\file_list_pre.log", replace
+dir $prog\*
+dir $log\*
+dir $data\*
+dir $orig\*
+log close
+
+
 /*--------------------------------*
  *    PROGRAMME AUFRUFEN          *
  *--------------------------------*/
@@ -33,7 +45,7 @@ global maxYear 2021    // End of your observation period (default: 2017)
 	
 if "$prepare_data" == "1" {
 	display "Runing prepare pass"
-	/*
+	
     // 00) Load SIAB for the first time and generate year and age
     do ${prog}\00_first_load.do
 

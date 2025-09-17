@@ -34,6 +34,12 @@ bys year east: egen total_obs=count(mwage!=.)
 gen sum_pct = 1/total_obs
 drop if east==.
 
+
+preserve
+	gcollapse (sd) sd = mwage (sum) n_persnr n_betr, by(east year)
+	mkmat east year sd n_persnr n_betr, mat(m_sd_raw)
+restore
+
 preserve
 	gcollapse (p15) p15 = mwage (p50) p50 = mwage  (p85) p85 = mwage (sum) n_persnr n_betr, by(east year)
 	mkmat east year p15 p50 p85 n_persnr n_betr, mat(m_pct)
@@ -74,20 +80,28 @@ restore
  
  */
 
-display "Ausgabe der Perzentile in Ost/West x Jahres-zellen ohne Gewichtung"
+display "Ausgabe der Perzentile in Ost/West x Jahres-zellen"
+mat_ncheck m_pct, pers(n_persnr) betr(n_betr)
 matrix list m_pct
 display "Ausgabe der Perzentile der AKM-Firmeneffekt"
+mat_ncheck m_pct_akm, pers(n_persnr) betr(n_betr)
 matrix list m_pct_akm 
 display "Ausgabe der Perzentile der nicht firmen-spezifischen Lohnanteile"
+mat_ncheck m_pct_nfw, pers(n_persnr) betr(n_betr)
 matrix list m_pct_nfw
 display "Ausgabe der Perzentile der firmen-spezifischen Lohnanteile"
+mat_ncheck m_pct_fw, pers(n_persnr) betr(n_betr)
 matrix list m_pct_fw
+display "Ausgabe der Standardabweichung der Löhne in Ost/West x Jahres-zellen"
+mat_ncheck m_sd_raw, pers(n_persnr) betr(n_betr)
+matrix list m_sd_raw
+
 
 //==============================================================================
 // 2. Lohnverteilung nach Alter X Bildungsgruppen 
 //==============================================================================
 
-/*
+
 //UNCOMMENTED SINCE IT HAS A PROBLEM WITH OBSERVATION COUNTS IN THE LOWEST EDUCATION CATEGORY!
 use ${data}\siab_panel.dta, clear
 
@@ -146,9 +160,10 @@ preserve
 	Alle Auswertungen beruhen auf vollständigen Jahres-Alters-Bildungsgruppen-Zellen, 
 	die die Mindestanzahl an Beobachtungen erfüllen.
 	*/
+	mat_ncheck m_wg_educ, pers(n_persnr) betr(n_betr)
 	matrix list m_wg_educ
 restore
-*/
+
 
 //==============================================================================
 // 	3. Kontrafaktische Verteilungen nach Imputationen von Leaver/Entrant Löhnen 
@@ -279,6 +294,7 @@ und erfüllen Mindestanforderungen an Beobachtungsumfang.
 */
 
 mkmat year east imputation p15 p50 p85  n_persnr n_betr, mat(m_imputation_leavers)
+mat_ncheck m_imputation_leavers, pers(n_persnr) betr(n_betr)
 matrix list m_imputation_leavers
 
 // 	3b. Imputationen für Labour Market Entrants
@@ -402,7 +418,7 @@ Verwendete Imputationsmethoden:
 Alle Auswertungen basieren auf vollständigen Jahres-Ost/West-Zellen 
 (1995, 2004, 2009, 2020) und erfüllen Mindestanforderungen an Beobachtungsumfang.
 */
-
+mat_ncheck m_imputation_entrants, pers(n_persnr) betr(n_betr)
 matrix list m_imputation_entrants
 
 
@@ -554,7 +570,9 @@ Matrix m_leave_demo:
 10. n_betr       = "Anzahl der Betriebe"
 */
 
+mat_ncheck m_leave_wages, pers(n_persnr) betr(n_betr)
 matrix list m_leave_wages
+mat_ncheck m_leave_demo, pers(n_persnr) betr(n_betr)
 matrix list m_leave_demo
 
 //Generate the entrant table entries
@@ -649,7 +667,9 @@ Matrix m_enter_demo:
 10. n_betr       = "Anzahl der Betriebe"
 */
 
+mat_ncheck m_enter_wages, pers(n_persnr) betr(n_betr)
 matrix list m_enter_wages
+mat_ncheck m_enter_demo, pers(n_persnr) betr(n_betr)
 matrix list m_enter_demo
 
 //==============================================================================
@@ -674,10 +694,13 @@ beiden Spalten angegeben. Da es nur Ost/West Jahres-Splits sind, sind die
 Beibachtungskriterien für die Ausgabe immer erfüllt.
  */
 
-matrix list m_sd_educ
-matrix list m_sd_ind2d
-matrix list m_sd_occ3
-matrix list m_sd_firm_fe
+foreach name in "educ" "ind2d" "occ3" "firm_fe"{
+		display ". matrix list m_sd_`name'"
+		mat_ncheck  m_sd_`name' , pers(n_persnr) betr(n_betr)
+		matrix list m_sd_`name' 
+}
+ 
+
 
 //==============================================================================
 //	5. RIF- und DFL-Decompositions
@@ -686,7 +709,10 @@ matrix list m_sd_firm_fe
 //5a. DFL-Dekomposition
 //------------------------------------------------------------------------------
 rename demo_detail demo
-dfl_pct  demo occ3 svbroad
+dfl_pct  demo occ3 svbroad tw_fe
+//DFL nach zwei Variablen für Construction-Sektor
+dfl_pct_custom i.construction i.occ3,tag(const_occ)
+
 
 /*
 In diesem Abschnitt werden mit dem DFL-Verfahren (DiNardo-Fortin-Lemieux) 
@@ -715,11 +741,13 @@ Die resultierenden Matrizen (m_p_dfl_*) enthalten:
  7. n_betr       = "Anzahl Betriebe in der Zelle"
 
 */
-matrix list m_p_dfl_demo
-matrix list m_p_dfl_occ3
-matrix list m_p_dfl_svbroad
-
-
+foreach name in "demo" "occ3" "const_occ" "svbroad" "tw_fe"{
+		display ". matrix list m_sd_`name'"
+		mat_ncheck  m_p_dfl_`name' , pers(n_persnr) betr(n_betr)
+		matrix list m_p_dfl_`name' 
+}
+ 
+ 
 //5b. RIF-Dekomposition
 //------------------------------------------------------------------------------
 

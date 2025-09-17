@@ -417,7 +417,7 @@ theme_eddy <- function(.bs=20) {
           strip.background = element_rect(color= NA,   fill=NA),
           panel.border     = element_rect(colour = "black", fill = NA, linetype = "solid"),
           strip.text       = element_text(colour = 'black'),
-          legend.title.align=0.5,
+          legend.title     = element_text(hjust = 0.5),
           strip.text.x = element_text(debug=FALSE,size = rel(0.8),margin = margin(3,0,3,0, "pt")),
           legend.key.width = unit(3, "line")
         ) 
